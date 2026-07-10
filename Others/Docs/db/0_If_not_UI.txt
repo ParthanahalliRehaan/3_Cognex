@@ -1,0 +1,52 @@
+If you **didn't** use the Supabase SQL Editor, you have two options:
+
+---
+
+## Option A: Supabase CLI (Recommended for real projects)
+
+Install the Supabase CLI and run migrations from your terminal:
+
+```bash
+# Install Supabase CLI (one-time)
+npm install -g supabase
+
+# Login to Supabase
+supabase login
+
+# Link your local project to your Supabase project
+supabase link --project-ref <your-project-ref>
+# (Project ref is the random string in your Supabase URL: https://abcdefgh12345678.supabase.co)
+
+# Run the migration
+supabase db push
+```
+
+This reads all files in `supabase/migrations/` and applies them in order.
+
+---
+
+## Option B: psql (Direct Postgres connection)
+
+Supabase gives you a direct Postgres connection string. You can use any Postgres client:
+
+```bash
+# Using psql (comes with PostgreSQL)
+psql "postgresql://postgres:[YOUR-PASSWORD]@db.abcdefgh12345678.supabase.co:5432/postgres" -f supabase/migrations/001_init.sql
+```
+
+Or use a GUI tool like **DBeaver**, **TablePlus**, or **pgAdmin** and run the SQL file.
+
+---
+
+## Which should YOU use?
+
+| Situation | Best Choice |
+|-----------|-------------|
+| Learning / solo project | **UI SQL Editor** ← You already did this, totally fine |
+| Team project / production | **Supabase CLI** with migrations folder |
+| Just want to understand | Keep the file as reference, use UI for now |
+
+---
+
+**For our project, since you already ran it in the UI, your database is ready.** The `001_init.sql` file lives in your repo as documentation and for reproducibility.
+

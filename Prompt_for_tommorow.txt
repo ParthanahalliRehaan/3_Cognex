@@ -1,0 +1,73 @@
+## 🧠 Cognex — Build Status (As of 2026-07-10 12:45)
+
+### ✅ COMPLETED STEPS
+
+| Step | What Was Done |
+|------|--------------|
+| **STEP 1** | Created project folder `cognex/`, Supabase migration `001_init.sql`, ran SQL in Supabase UI |
+| **STEP 2** | Scaffolded Cloudflare Worker with `npm create cloudflare@latest -- cognex-worker` |
+| **STEP 3** | `wrangler.jsonc` is configured correctly (no changes needed) |
+| **STEP 4** | Installed dependencies: `@supabase/supabase-js`, `ai`, `groq-sdk` |
+| **STEP 5** | Supabase tables created via UI: `documents`, `graph_nodes`, `graph_edges`, `match_documents` function |
+| **ENV Setup** | Created `.env` file in `cognex/backend/cognex-worker/` with all API keys |
+
+### 📁 CURRENT FILE STRUCTURE
+
+```
+cognex/
+├── backend/
+│   └── cognex-worker/
+│       ├── src/
+│       │   ├── index.js          ← Default "Basic Backend Worker" response
+│       │   ├── github.js         ← EMPTY (needs code)
+│       │   ├── graph.js          ← EMPTY (needs code)
+│       │   ├── embeddings.js     ← EMPTY (needs code)
+│       │   ├── supabase.js       ← EMPTY (needs code)
+│       │   ├── rag.js            ← EMPTY (needs code)
+│       │   ├── groq.js           ← EMPTY (needs code)
+│       │   └── search.js         ← EMPTY (needs code)
+│       ├── .env                  ← Has all API keys (gitignored)
+│       ├── wrangler.jsonc        ← Default config, good as-is
+│       └── package.json          ← Dependencies installed
+├── supabase/
+│   └── migrations/
+│       └── 001_init.sql          ← Schema file (already run in UI)
+└── frontend/                     ← NOT YET CREATED
+```
+
+### 🔑 API KEYS COLLECTED
+
+- ✅ `SUPABASE_URL` — from Supabase Project Settings → API
+- ✅ `SUPABASE_ANON_KEY` — from Supabase Project Settings → API
+- ✅ `GROQ_API_KEY` — from Groq console
+- ✅ `GITHUB_TOKEN` — from GitHub Settings → Developer settings → Personal access tokens (classic) with `repo` and `read:user` scopes
+- ✅ `WEB_SEARCH_API_KEY` — from Serper.dev (free tier, 2500 queries)
+
+### 🎯 NEXT STEP TO BUILD
+
+**STEP 6: `github.js`** — GitHub API client module
+
+This file needs functions to fetch:
+- `fetchRepoMetadata(owner, repo, token)`
+- `fetchReadme(owner, repo, token)`
+- `fetchFileTree(owner, repo, token)`
+- `fetchFileContent(owner, repo, path, token)`
+- `fetchIssues(owner, repo, token, state = 'all')`
+- `fetchPullRequests(owner, repo, token, state = 'all')`
+- `fetchCommits(owner, repo, token, perPage = 100)`
+- `fetchContributors(owner, repo, token)`
+
+All using `fetch()` to GitHub REST API with proper headers and pagination.
+
+### 📝 BUILD STYLE
+
+- One file at a time
+- Explain what the file does before coding
+- Paste code, then test if needed
+- Then move to next file
+
+---
+
+**PASTE THE ABOVE AS YOUR PROMPT TOMORROW AND SAY: "Continue from here"**
+
+I'll pick up with **STEP 6: `github.js`**. See you tomorrow! 🚀

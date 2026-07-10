@@ -1,0 +1,57 @@
+## The Core Question
+
+> "If I want to run the SQL file to create tables **without** using the Supabase UI or Supabase CLI, do I need Postgres installed locally?"
+
+---
+
+## The Answer
+
+**Yes, if you want to use `psql` or any direct Postgres connection tool, you need the Postgres client installed on your PC.**
+
+But here's the key distinction:
+
+| What you need | Why | Required? |
+|-------------|-----|-----------|
+| **Postgres SERVER** | Runs the actual database | ❌ No — Supabase hosts this |
+| **Postgres CLIENT (`psql`)** | Connects to a remote Postgres database | ✅ Only if you use `psql` |
+| **Supabase JS Client** | Connects via HTTP/REST API | ✅ What we'll actually use |
+
+---
+
+## The Three Ways to Run Your SQL Migration
+
+### Way 1: Supabase UI SQL Editor (What you did ✅)
+- **Needs:** Just a browser
+- **How:** Paste SQL, click Run
+- **Postgres on PC?** No
+
+### Way 2: Supabase CLI
+- **Needs:** `npm install -g supabase`
+- **How:** `supabase db push`
+- **Postgres on PC?** No (CLI talks to Supabase API, not direct Postgres)
+
+### Way 3: Direct Postgres Connection (`psql`)
+- **Needs:** `psql` client installed
+- **How:** `psql "connection-string" -f 001_init.sql`
+- **Postgres on PC?** **Yes, you need the client tools** (but NOT the server)
+
+---
+
+## If You Want to Install `psql` (Just for Knowledge)
+
+**Windows:** Download PostgreSQL installer from [postgresql.org](https://www.postgresql.org/download/windows/) → choose "Command Line Tools only" (uncheck the server)
+
+**Mac:** `brew install libpq` (lightweight, just the client)
+
+**Linux:** `sudo apt install postgresql-client`
+
+---
+
+## But Remember
+
+**For our project, we don't need any of this.** Your backend (Cloudflare Worker) will talk to Supabase using the **JavaScript client** (`@supabase/supabase-js`) over HTTP — not direct Postgres connections.
+
+The SQL file is just:
+- Documentation
+- A backup way to recreate the schema
+- Good practice for version control
