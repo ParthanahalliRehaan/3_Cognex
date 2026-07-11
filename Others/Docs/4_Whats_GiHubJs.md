@@ -1,3 +1,20 @@
+# Code
+## What `github.js` Does
+
+This module is your data pipeline's **first stage**. It talks to GitHub's REST API using plain `fetch()` to extract everything you need to build the knowledge graph: repo metadata, README, file tree, source code, issues, PRs, commits, and contributors.
+
+**Key design decisions:**
+- **Authentication via header:** `Authorization: token ${token}` — required to hit 5,000 req/hour instead of 60.
+- **Pagination handling:** GitHub paginates lists (issues, commits, etc.) with `?page=` and `?per_page=`. We'll fetch all pages for small datasets, or cap at a reasonable limit for huge repos.
+- **Error resilience:** If a repo has no README or issues are disabled, we return sensible defaults instead of crashing.
+
+---
+
+## The Code
+
+Paste this into `cognex/backend/cognex-worker/src/github.js`:
+
+```javascript
 /**
  * github.js — GitHub REST API client for Cognex
  * Fetches repository data, files, issues, PRs, commits, and contributors.
@@ -249,3 +266,161 @@ async function getDefaultBranch(owner, repo, token) {
   const data = await response.json();
   return data.default_branch;
 }
+```
+
+---
+
+## How to Test It (Locally)
+
+You can test this module in isolation before wiring it into the Worker. Create a quick test script:
+
+```bash
+cd cognex/backend/cognex-worker
+node --input-type=module <<'EOF'
+import { parseRepoUrl, fetchRepoMetadata, fetchReadme, fetchFileTree, fetchIssues, fetchContributors } from './src/github.js';
+
+const repoUrl = 'https://github.com/vercel/next.js';
+const { owner, repo } = parseRepoUrl(repoUrl);
+const token = process.env.GITHUB_TOKEN; // Or paste your token here
+
+async function test() {
+  console.log('Testing with:', owner, repo);
+  
+  const meta = await fetchRepoMetadata(owner, repo, token);
+  console.log('✅ Metadata:', meta.name, '⭐', meta.stars);
+
+  const readme = await fetchReadme(owner, repo, token);
+  console.log('✅ README length:', readme.content.length, 'chars');
+
+  const tree = await fetchFileTree(owner, repo, token);
+  console.log('✅ File tree:', tree.length, 'items');
+
+  const issues = await fetchIssues(owner, repo, token, 'open');
+  console.log('✅ Issues:', issues.length);
+
+  const contributors = await fetchContributors(owner, repo, token);
+  console.log('✅ Contributors:', contributors.slice(0, 3).map(c => c.login));
+}
+
+test().catch(console.error);
+EOF
+```
+
+> **Note:** You'll need to set `GITHUB_TOKEN` in your shell or hardcode it for this test. In the Worker, it comes from `env.GITHUB_TOKEN`.
+
+# Doubts
+## 1. Authentication via Header
+
+### What It Is
+Instead of putting your API key in the URL (like `?api_key=abc123`), you send it in the **HTTP request headers** — a separate section of the request that isn't visible in browser history or server logs.
+
+### Why It Matters
+
+| Approach | Problem |
+|----------|---------|
+| `?token=abc123` in URL | Exposed in browser history, server logs, referrer headers, shared links |
+| `Authorization: token abc123` in header | Hidden from URLs, more secure, standard practice |
+
+### How It Works in `github.js`
+
+```javascript
+const headers = {
+  'Accept': 'application/vnd.github.v3+json',  // Tell GitHub we want JSON
+  'User-Agent': 'Cognex-Knowledge-Graph',         // Identify our app
+};
+
+if (token) {
+  headers['Authorization'] = `token ${token}`;    // 🔐 The magic line
+}
+```
+
+**The `fetch()` call then sends these headers with every request:**
+```
+GET /repos/vercel/next.js HTTP/1.1
+Host: api.github.com
+Accept: application/vnd.github.v3+json
+User-Agent: Cognex-Knowledge-Graph
+Authorization: token ghp_xxxxxxxxxxxx
+```
+
+### GitHub's Rate Limits
+
+| Authentication | Requests/Hour | Real-World Impact |
+|----------------|---------------|-------------------|
+| No token (anonymous) | 60 | You hit the limit in ~1 minute of fetching |
+| With token | 5,000 | Enough for most repos; still need pagination for huge ones |
+
+> **Pro tip:** If you see `403 Forbidden` or `rate limit exceeded`, check `response.headers.get('X-RateLimit-Remaining')` to see how many requests you have left.
+
+---
+
+## 2. Pagination Handling
+
+### What It Is
+APIs don't return *everything* at once. Imagine asking GitHub for all issues in React — there are 12,000+. Sending that in one response would crash both servers and clients. So APIs **paginate**: they return data in chunks (pages).
+
+### How GitHub Does It
+
+GitHub uses **query parameters** for pagination:
+- `?per_page=100` — How many items per page (max 100)
+- `?page=1`, `?page=2`, `?page=3` — Which page to fetch
+
+### The Pattern in `github.js`
+
+```javascript
+export async function fetchIssues(owner, repo, token, state = 'all') {
+  const issues = [];
+  const perPage = 100;      // Max allowed by GitHub
+  const maxPages = 3;       // Safety cap: 300 issues max
+
+  for (let page = 1; page <= maxPages; page++) {
+    // Build URL with page number
+    const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues?state=${state}&per_page=${perPage}&page=${page}`;
+    
+    const response = await githubFetch(url, token);
+    const data = await response.json();
+
+    // Filter out pull requests (GitHub returns PRs as issues too)
+    const filtered = data.filter(item => !item.pull_request);
+    issues.push(...filtered);
+
+    // 🛑 STOP condition: if we got fewer items than perPage, 
+    // we've reached the last page. No more to fetch.
+    if (data.length < perPage) break;
+  }
+
+  return issues;
+}
+```
+
+### Visual Walkthrough
+
+```
+Page 1: ?per_page=100&page=1  →  Returns 100 items  →  Continue
+Page 2: ?per_page=100&page=2  →  Returns 100 items  →  Continue
+Page 3: ?per_page=100&page=3  →  Returns 100 items  →  Continue
+Page 4: ?per_page=100&page=4  →  Returns 47 items   →  STOP (47 < 100)
+```
+
+### Why We Cap at `maxPages = 3`
+
+| Without Cap | With Cap (300 items) |
+|-------------|----------------------|
+| Could make 120 requests for a huge repo | Max 3 requests |
+| Risk hitting rate limit | Safe and fast |
+| Worker might timeout (30s limit) | Finishes quickly |
+| LLM context window would overflow anyway | Still enough context for RAG |
+
+> **Trade-off:** We sacrifice completeness for reliability. For a knowledge graph, the *recent* 300 issues/commits are usually more relevant than ancient ones.
+
+---
+
+## Summary Table
+
+| Concept | Purpose | Where It's Used |
+|---------|---------|---------------|
+| **Auth Header** | Securely identify yourself to the API | Every single API call |
+| **Pagination** | Fetch large datasets in manageable chunks | List endpoints (issues, commits, PRs, file tree) |
+| **Per-page limit** | Control chunk size | `?per_page=100` |
+| **Stop condition** | Know when to stop fetching | `if (data.length < perPage) break` |
+| **Max pages cap** | Prevent runaway requests/timeouts | `maxPages = 3` |

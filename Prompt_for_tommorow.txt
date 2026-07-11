@@ -1,4 +1,4 @@
-## 🧠 Cognex — Build Status (As of 2026-07-10 12:45)
+## 🧠 Cognex — Build Status (As of 2026-07-11 19:12)
 
 ### ✅ COMPLETED STEPS
 
@@ -7,9 +7,12 @@
 | **STEP 1** | Created project folder `cognex/`, Supabase migration `001_init.sql`, ran SQL in Supabase UI |
 | **STEP 2** | Scaffolded Cloudflare Worker with `npm create cloudflare@latest -- cognex-worker` |
 | **STEP 3** | `wrangler.jsonc` is configured correctly (no changes needed) |
-| **STEP 4** | Installed dependencies: `@supabase/supabase-js`, `ai`, `groq-sdk` |
+| **STEP 4** | Installed dependencies: `@supabase/supabase-js`, `ai`, `groq-sdk`, `dotenv` |
 | **STEP 5** | Supabase tables created via UI: `documents`, `graph_nodes`, `graph_edges`, `match_documents` function |
 | **ENV Setup** | Created `.env` file in `cognex/backend/cognex-worker/` with all API keys |
+| **STEP 6** | Built `github.js` — GitHub API client module with auth headers, pagination, all 8 functions |
+| **Testing** | Created `test/test-github.js` with `dotenv` loading from `.env` — tested successfully against `vercel/next.js` |
+| **Git** | Committed: `"Dawn 2: Data pipeline retrieval initiated"` |
 
 ### 📁 CURRENT FILE STRUCTURE
 
@@ -19,16 +22,18 @@ cognex/
 │   └── cognex-worker/
 │       ├── src/
 │       │   ├── index.js          ← Default "Basic Backend Worker" response
-│       │   ├── github.js         ← EMPTY (needs code)
+│       │   ├── github.js         ← ✅ COMPLETE — 8 functions, tested
 │       │   ├── graph.js          ← EMPTY (needs code)
 │       │   ├── embeddings.js     ← EMPTY (needs code)
 │       │   ├── supabase.js       ← EMPTY (needs code)
 │       │   ├── rag.js            ← EMPTY (needs code)
 │       │   ├── groq.js           ← EMPTY (needs code)
 │       │   └── search.js         ← EMPTY (needs code)
+│       ├── test/
+│       │   └── test-github.js    ← ✅ Loads .env via dotenv, tests all github.js functions
 │       ├── .env                  ← Has all API keys (gitignored)
 │       ├── wrangler.jsonc        ← Default config, good as-is
-│       └── package.json          ← Dependencies installed
+│       └── package.json          ← Dependencies installed (+ dotenv for testing)
 ├── supabase/
 │   └── migrations/
 │       └── 001_init.sql          ← Schema file (already run in UI)
@@ -40,24 +45,38 @@ cognex/
 - ✅ `SUPABASE_URL` — from Supabase Project Settings → API
 - ✅ `SUPABASE_ANON_KEY` — from Supabase Project Settings → API
 - ✅ `GROQ_API_KEY` — from Groq console
-- ✅ `GITHUB_TOKEN` — from GitHub Settings → Developer settings → Personal access tokens (classic) with `repo` and `read:user` scopes
+- ✅ `GITHUB_TOKEN` — from GitHub Settings → Personal access tokens (classic) with `repo` and `read:user` scopes
 - ✅ `WEB_SEARCH_API_KEY` — from Serper.dev (free tier, 2500 queries)
 
 ### 🎯 NEXT STEP TO BUILD
 
-**STEP 6: `github.js`** — GitHub API client module
+**STEP 7: `graph.js`** — Knowledge Graph engine
 
-This file needs functions to fetch:
-- `fetchRepoMetadata(owner, repo, token)`
-- `fetchReadme(owner, repo, token)`
-- `fetchFileTree(owner, repo, token)`
-- `fetchFileContent(owner, repo, path, token)`
-- `fetchIssues(owner, repo, token, state = 'all')`
-- `fetchPullRequests(owner, repo, token, state = 'all')`
-- `fetchCommits(owner, repo, token, perPage = 100)`
-- `fetchContributors(owner, repo, token)`
+This file needs to:
+1. **Parse the file tree** from `github.js` and identify:
+   - Source code files (`.js`, `.ts`, `.py`, etc.)
+   - Config files (`package.json`, `requirements.txt`)
+   - Documentation files (`.md`)
 
-All using `fetch()` to GitHub REST API with proper headers and pagination.
+2. **Extract nodes:**
+   - `file` nodes: path, extension, size
+   - `function` nodes: function names (basic regex extraction from code)
+   - `contributor` nodes: username, avatar, commit count
+   - `issue` nodes: title, number, state, labels
+   - `pr` nodes: title, number, state, author
+   - `commit` nodes: sha, message, author, date
+   - `dependency` nodes: packages from `package.json` / `requirements.txt`
+
+3. **Extract edges (relationships):**
+   - `file CONTAINS function`
+   - `contributor AUTHORED commit`
+   - `commit MODIFIES file`
+   - `issue REFERENCES file`
+   - `pr FIXES issue`
+   - `file DEPENDS_ON dependency`
+   - `contributor OPENED issue`
+
+4. **Return structured `{ nodes, edges }`** for storage in Supabase (via `supabase.js` in Step 9)
 
 ### 📝 BUILD STYLE
 
@@ -70,4 +89,4 @@ All using `fetch()` to GitHub REST API with proper headers and pagination.
 
 **PASTE THE ABOVE AS YOUR PROMPT TOMORROW AND SAY: "Continue from here"**
 
-I'll pick up with **STEP 6: `github.js`**. See you tomorrow! 🚀
+I'll pick up with **STEP 7: `graph.js`**. See you tomorrow! 🚀
