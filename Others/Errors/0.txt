@@ -1,0 +1,6 @@
+1. **Worker CPU limit on ingestion** — "Worker exceeded CPU time limit" on free tier
+   - `rag.js` is already CPU-optimized (reduced files/issues/commits)
+   - **May need further optimization**: skip code file embeddings entirely, only do README + package.json + top 3 issues
+   - **Alternative**: Split ingestion into multiple Worker calls (fetch → graph → embed → store) triggered sequentially from frontend
+
+2. HF DNS Issue!
