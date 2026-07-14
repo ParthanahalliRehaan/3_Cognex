@@ -1,18 +1,30 @@
-## 🧠 Cognex — Build Status (As of 2026-07-11 19:12)
+## 🧠 Cognex — Build Status (As of 2026-07-14 23:57)
 
 ### ✅ COMPLETED STEPS
 
 | Step | What Was Done |
 |------|--------------|
-| **STEP 1** | Created project folder `cognex/`, Supabase migration `001_init.sql`, ran SQL in Supabase UI |
-| **STEP 2** | Scaffolded Cloudflare Worker with `npm create cloudflare@latest -- cognex-worker` |
-| **STEP 3** | `wrangler.jsonc` is configured correctly (no changes needed) |
-| **STEP 4** | Installed dependencies: `@supabase/supabase-js`, `ai`, `groq-sdk`, `dotenv` |
-| **STEP 5** | Supabase tables created via UI: `documents`, `graph_nodes`, `graph_edges`, `match_documents` function |
-| **ENV Setup** | Created `.env` file in `cognex/backend/cognex-worker/` with all API keys |
-| **STEP 6** | Built `github.js` — GitHub API client module with auth headers, pagination, all 8 functions |
-| **Testing** | Created `test/test-github.js` with `dotenv` loading from `.env` — tested successfully against `vercel/next.js` |
-| **Git** | Committed: `"Dawn 2: Data pipeline retrieval initiated"` |
+| **STEP 1-5** | Project scaffold, Supabase migration, Cloudflare Worker setup, dependencies installed, tables created |
+| **STEP 6** | `github.js` — GitHub API client with 8 functions, tested |
+| **STEP 7** | `graph.js` — Knowledge Graph engine, tested |
+| **STEP 8** | `embeddings.js` — Cohere Embed API integration (1024 dims), tested |
+| **STEP 9** | `supabase.js` — Supabase client with service key for writes, tested |
+| **STEP 10** | `groq.js` — Groq streaming LLM client, tested |
+| **STEP 11** | `search.js` — Serper.dev web search, tested |
+| **STEP 12** | `rag.js` — Agentic RAG orchestrator (CPU-optimized for free tier), tested |
+| **STEP 13** | `index.js` — Worker entry point with all routes, tested |
+| **Frontend** | `index.html`, `style.css`, `app.js` built with Cytoscape.js graph viz |
+| **Deploy** | Worker deployed, frontend deployed to Cloudflare Pages |
+
+### 🔑 API KEYS COLLECTED
+
+- ✅ `SUPABASE_URL`
+- ✅ `SUPABASE_ANON_KEY`
+- ✅ `SUPABASE_SERVICE_KEY`
+- ✅ `GROQ_API_KEY`
+- ✅ `GITHUB_TOKEN`
+- ✅ `COHERE_API_KEY`
+- ✅ `WEB_SEARCH_API_KEY` (Serper.dev)
 
 ### 📁 CURRENT FILE STRUCTURE
 
@@ -21,72 +33,63 @@ cognex/
 ├── backend/
 │   └── cognex-worker/
 │       ├── src/
-│       │   ├── index.js          ← Default "Basic Backend Worker" response
-│       │   ├── github.js         ← ✅ COMPLETE — 8 functions, tested
-│       │   ├── graph.js          ← EMPTY (needs code)
-│       │   ├── embeddings.js     ← EMPTY (needs code)
-│       │   ├── supabase.js       ← EMPTY (needs code)
-│       │   ├── rag.js            ← EMPTY (needs code)
-│       │   ├── groq.js           ← EMPTY (needs code)
-│       │   └── search.js         ← EMPTY (needs code)
+│       │   ├── index.js          ← Worker routes (CORS fixed)
+│       │   ├── github.js         ← Returns strings for content (not objects)
+│       │   ├── graph.js          ← Complete
+│       │   ├── embeddings.js     ← Cohere API (embed-english-v3.0)
+│       │   ├── supabase.js       ← Service key for writes
+│       │   ├── rag.js            ← CPU-optimized for free tier
+│       │   ├── groq.js           ← Streaming + non-streaming
+│       │   └── search.js         ← Serper.dev
 │       ├── test/
-│       │   └── test-github.js    ← ✅ Loads .env via dotenv, tests all github.js functions
-│       ├── .env                  ← Has all API keys (gitignored)
-│       ├── wrangler.jsonc        ← Default config, good as-is
-│       └── package.json          ← Dependencies installed (+ dotenv for testing)
-├── supabase/
-│   └── migrations/
-│       └── 001_init.sql          ← Schema file (already run in UI)
-└── frontend/                     ← NOT YET CREATED
+│       │   ├── test-github.js
+│       │   ├── test-graph.js
+│       │   ├── test-embeddings.js
+│       │   ├── test-supabase.js
+│       │   ├── test-groq.js
+│       │   ├── test-search.js
+│       │   ├── test-rag.js
+│       │   └── test-index.js
+│       ├── .env
+│       └── wrangler.jsonc
+├── frontend/
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
+└── supabase/
+    └── migrations/
+        └── 001_init.sql
 ```
 
-### 🔑 API KEYS COLLECTED
+### 🚨 CURRENT ISSUES TO FIX TOMORROW
 
-- ✅ `SUPABASE_URL` — from Supabase Project Settings → API
-- ✅ `SUPABASE_ANON_KEY` — from Supabase Project Settings → API
-- ✅ `GROQ_API_KEY` — from Groq console
-- ✅ `GITHUB_TOKEN` — from GitHub Settings → Personal access tokens (classic) with `repo` and `read:user` scopes
-- ✅ `WEB_SEARCH_API_KEY` — from Serper.dev (free tier, 2500 queries)
+1. **Worker CPU limit on ingestion** — "Worker exceeded CPU time limit" on free tier
+   - `rag.js` is already CPU-optimized (reduced files/issues/commits)
+   - **May need further optimization**: skip code file embeddings entirely, only do README + package.json + top 3 issues
+   - **Alternative**: Split ingestion into multiple Worker calls (fetch → graph → embed → store) triggered sequentially from frontend
 
-### 🎯 NEXT STEP TO BUILD
+2. **Frontend "Failed to fetch" / 522 errors**
+   - CORS headers are set but may need verification on deployed Worker
+   - Check `API_BASE` in `app.js` matches actual Worker URL
+   - May need to redeploy Worker after `github.js` string fix
 
-**STEP 7: `graph.js`** — Knowledge Graph engine
+3. **github.js content returns** — Fixed to return strings (not objects) for `fetchReadme` and `fetchFileContent`
+   - Verify this doesn't break `graph.js` expectations
 
-This file needs to:
-1. **Parse the file tree** from `github.js` and identify:
-   - Source code files (`.js`, `.ts`, `.py`, etc.)
-   - Config files (`package.json`, `requirements.txt`)
-   - Documentation files (`.md`)
+### 🎯 NEXT STEPS
 
-2. **Extract nodes:**
-   - `file` nodes: path, extension, size
-   - `function` nodes: function names (basic regex extraction from code)
-   - `contributor` nodes: username, avatar, commit count
-   - `issue` nodes: title, number, state, labels
-   - `pr` nodes: title, number, state, author
-   - `commit` nodes: sha, message, author, date
-   - `dependency` nodes: packages from `package.json` / `requirements.txt`
-
-3. **Extract edges (relationships):**
-   - `file CONTAINS function`
-   - `contributor AUTHORED commit`
-   - `commit MODIFIES file`
-   - `issue REFERENCES file`
-   - `pr FIXES issue`
-   - `file DEPENDS_ON dependency`
-   - `contributor OPENED issue`
-
-4. **Return structured `{ nodes, edges }`** for storage in Supabase (via `supabase.js` in Step 9)
+1. **Fix ingestion CPU limit** — Test with small repo, verify free tier works
+2. **Fix frontend connectivity** — Ensure CORS + URL are correct
+3. **End-to-end test** — Ingest repo → ask questions → view graph
+4. **Polish** — Loading states, error handling, responsive fixes
+5. **Optional** — Add auth, caching, multi-repo comparison
 
 ### 📝 BUILD STYLE
 
-- One file at a time
-- Explain what the file does before coding
-- Paste code, then test if needed
-- Then move to next file
+- One fix at a time
+- Test after each change
+- Deploy and verify
 
 ---
 
 **PASTE THE ABOVE AS YOUR PROMPT TOMORROW AND SAY: "Continue from here"**
-
-I'll pick up with **STEP 7: `graph.js`**. See you tomorrow! 🚀

@@ -14,8 +14,10 @@
     "wrangler": "^4.110.0"
   },
   "dependencies": {
+    "@ai-sdk/groq": "^4.0.10",
     "@supabase/supabase-js": "^2.110.2",
-    "ai": "^7.0.19",
+    "@xenova/transformers": "^2.0.1",
+    "ai": "^7.0.26",
     "dotenv": "^17.4.2",
     "groq-sdk": "^1.3.0",
     "miniflare": "^4.20260708.1"

@@ -46,6 +46,8 @@ export async function fetchRepoMetadata(owner, repo, token) {
   const data = await response.json();
 
   return {
+    owner: data.owner.login,
+    repo: data.name,
     name: data.name,
     fullName: data.full_name,
     description: data.description,
@@ -58,12 +60,13 @@ export async function fetchRepoMetadata(owner, repo, token) {
     createdAt: data.created_at,
     updatedAt: data.updated_at,
     license: data.license?.name || null,
-    htmlUrl: data.html_url,
+    html_url: data.html_url,
   };
 }
 
 /**
- * Fetch README content (decoded from base64).
+ * Fetch README content as a plain string (decoded from base64).
+ * Returns empty string if no README exists.
  */
 export async function fetchReadme(owner, repo, token) {
   try {
@@ -71,22 +74,17 @@ export async function fetchReadme(owner, repo, token) {
     const response = await githubFetch(url, token);
     const data = await response.json();
 
-    // GitHub returns content as base64
-    const content = typeof Buffer !== 'undefined'
-      ? Buffer.from(data.content, 'base64').toString('utf-8')
-      : atob(data.content.replace(/\n/g, '')); // Cloudflare Workers have atob
+    if (data.content) {
+      const decoded = typeof Buffer !== 'undefined'
+        ? Buffer.from(data.content, 'base64').toString('utf-8')
+        : atob(data.content.replace(/\n/g, ''));
+      return decoded;
+    }
 
-    return {
-      name: data.name,
-      path: data.path,
-      content,
-      htmlUrl: data.html_url,
-      sha: data.sha,
-    };
+    return '';
   } catch (err) {
-    // Some repos have no README
     if (err.message.includes('404')) {
-      return { name: 'README.md', path: 'README.md', content: '', htmlUrl: null, sha: null };
+      return '';
     }
     throw err;
   }
@@ -110,7 +108,8 @@ export async function fetchFileTree(owner, repo, token) {
 }
 
 /**
- * Fetch raw content of a specific file.
+ * Fetch raw content of a specific file as a plain string.
+ * Returns empty string if file has no content.
  */
 export async function fetchFileContent(owner, repo, path, token) {
   const encodedPath = encodeURIComponent(path);
@@ -119,14 +118,13 @@ export async function fetchFileContent(owner, repo, path, token) {
   const data = await response.json();
 
   if (data.content) {
-    const content = typeof Buffer !== 'undefined'
+    const decoded = typeof Buffer !== 'undefined'
       ? Buffer.from(data.content, 'base64').toString('utf-8')
       : atob(data.content.replace(/\n/g, ''));
-    return { path, content, sha: data.sha, size: data.size };
+    return decoded;
   }
 
-  // If it's a directory or symlink, return metadata only
-  return { path, content: null, sha: data.sha, size: data.size, type: data.type };
+  return '';
 }
 
 /**
@@ -135,14 +133,13 @@ export async function fetchFileContent(owner, repo, path, token) {
 export async function fetchIssues(owner, repo, token, state = 'all') {
   const issues = [];
   const perPage = 100;
-  const maxPages = 3; // Cap at 300 issues to avoid rate limits
+  const maxPages = 3;
 
   for (let page = 1; page <= maxPages; page++) {
     const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/issues?state=${state}&per_page=${perPage}&page=${page}`;
     const response = await githubFetch(url, token);
     const data = await response.json();
 
-    // GitHub returns pull requests as issues too — filter them out
     const filtered = data.filter(item => !item.pull_request);
 
     issues.push(...filtered.map(issue => ({
@@ -150,15 +147,15 @@ export async function fetchIssues(owner, repo, token, state = 'all') {
       title: issue.title,
       state: issue.state,
       body: issue.body || '',
-      labels: issue.labels.map(l => l.name),
-      author: issue.user?.login || 'unknown',
-      createdAt: issue.created_at,
-      updatedAt: issue.updated_at,
+      labels: issue.labels.map(l => ({ name: l.name, color: l.color })),
+      user: issue.user,
+      created_at: issue.created_at,
+      updated_at: issue.updated_at,
       comments: issue.comments,
-      htmlUrl: issue.html_url,
+      html_url: issue.html_url,
     })));
 
-    if (data.length < perPage) break; // Last page
+    if (data.length < perPage) break;
   }
 
   return issues;
@@ -182,11 +179,15 @@ export async function fetchPullRequests(owner, repo, token, state = 'all') {
       title: pr.title,
       state: pr.state,
       body: pr.body || '',
-      author: pr.user?.login || 'unknown',
-      createdAt: pr.created_at,
-      updatedAt: pr.updated_at,
+      user: pr.user,
+      created_at: pr.created_at,
+      updated_at: pr.updated_at,
       merged: pr.merged_at !== null,
-      htmlUrl: pr.html_url,
+      draft: pr.draft || false,
+      additions: pr.additions || 0,
+      deletions: pr.deletions || 0,
+      changed_files: pr.changed_files || 0,
+      html_url: pr.html_url,
       headBranch: pr.head?.ref,
       baseBranch: pr.base?.ref,
     })));
@@ -202,7 +203,7 @@ export async function fetchPullRequests(owner, repo, token, state = 'all') {
  */
 export async function fetchCommits(owner, repo, token, perPage = 100) {
   const commits = [];
-  const maxPages = 3; // Cap at 300 commits
+  const maxPages = 3;
 
   for (let page = 1; page <= maxPages; page++) {
     const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/commits?per_page=${perPage}&page=${page}`;
@@ -211,12 +212,17 @@ export async function fetchCommits(owner, repo, token, perPage = 100) {
 
     commits.push(...data.map(commit => ({
       sha: commit.sha,
-      message: commit.commit?.message || '',
-      author: commit.commit?.author?.name || commit.author?.login || 'unknown',
-      authorLogin: commit.author?.login || null,
-      date: commit.commit?.author?.date,
-      htmlUrl: commit.html_url,
-      stats: null, // Would need separate API call per commit for stats
+      commit: {
+        message: commit.commit?.message || '',
+        author: {
+          name: commit.commit?.author?.name || 'unknown',
+          email: commit.commit?.author?.email,
+          date: commit.commit?.author?.date,
+        },
+      },
+      author: commit.author,
+      html_url: commit.html_url,
+      files: [], // Would need separate API call per commit
     })));
 
     if (data.length < perPage) break;
@@ -235,8 +241,8 @@ export async function fetchContributors(owner, repo, token) {
 
   return data.map(contributor => ({
     login: contributor.login,
-    avatarUrl: contributor.avatar_url,
-    htmlUrl: contributor.html_url,
+    avatar_url: contributor.avatar_url,
+    html_url: contributor.html_url,
     contributions: contributor.contributions,
   }));
 }

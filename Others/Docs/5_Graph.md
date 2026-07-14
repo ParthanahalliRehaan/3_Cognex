@@ -1,6 +1,17 @@
+## What `graph.js` Does(These are older version code)
+
+This module is the heart of Cognex's intelligence. It takes raw data from `github.js` (files, commits, issues, PRs, contributors, code contents) and transforms it into a structured graph of **nodes** (entities) and **edges** (relationships). This graph lets the AI agent answer questions like:
+- *"Who wrote the auth feature?"* → traverse `contributor → commit → file → function`
+- *"What issues are related to package X?"* → traverse `dependency → file → issue`
+
+---
+
+## The Code: `backend/cognex-worker/src/graph.js`
+
+```javascript
 /**
  * graph.js — Knowledge Graph Engine for Cognex
- *
+ * 
  * Parses GitHub repo data into nodes and edges for Supabase storage.
  * Nodes: file, function, contributor, issue, pr, commit, dependency
  * Edges: CONTAINS, AUTHORED, MODIFIES, REFERENCES, FIXES, DEPENDS_ON, OPENED
@@ -68,13 +79,13 @@ function classifyFile(path) {
   const parts = path.split('/');
   const name = parts[parts.length - 1];
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
-
+  
   let category = 'other';
   if (CODE_EXTENSIONS.has(ext)) category = 'source';
   else if (CONFIG_FILES.has(name) || CONFIG_FILES.has(name.toLowerCase())) category = 'config';
   else if (DOC_EXTENSIONS.has(ext)) category = 'doc';
   else if (name.toLowerCase() === 'readme.md' || name.toLowerCase().startsWith('readme')) category = 'readme';
-
+  
   return { path, name, ext, category, size: null };
 }
 
@@ -86,7 +97,7 @@ function classifyFile(path) {
 function extractFunctions(code, extension) {
   const functions = [];
   let regex;
-
+  
   // JavaScript / TypeScript / JSX / TSX / Vue / Svelte / Astro
   if (['js', 'ts', 'jsx', 'tsx', 'vue', 'svelte', 'astro'].includes(extension)) {
     regex = /(?:function|async function)\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s*)?(?:function|\(?[^)]*\)?\s*=>)|class\s+(\w+)|(?:export\s+)?(?:async\s+)?function\s*\*\s*(\w+)|(\w+)\s*=\s*class\s|(?:static\s+)?(\w+)\s*\([^)]*\)\s*\{/g;
@@ -123,7 +134,7 @@ function extractFunctions(code, extension) {
   else {
     regex = /function\s+(\w+)|def\s+(\w+)|class\s+(\w+)|fn\s+(\w+)/g;
   }
-
+  
   let match;
   while ((match = regex.exec(code)) !== null) {
     const name = match[1] || match[2] || match[3] || match[4] || match[5] || match[6];
@@ -135,7 +146,7 @@ function extractFunctions(code, extension) {
       }
     }
   }
-
+  
   return [...new Set(functions)]; // Deduplicate
 }
 
@@ -149,7 +160,7 @@ function extractNpmDependencies(packageJsonText) {
     const pkg = JSON.parse(packageJsonText);
     const deps = [];
     const sources = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
-
+    
     for (const source of sources) {
       if (pkg[source]) {
         for (const [name, version] of Object.entries(pkg[source])) {
@@ -174,11 +185,11 @@ function extractNpmDependencies(packageJsonText) {
 function extractPythonDependencies(requirementsText) {
   const deps = [];
   const lines = requirementsText.split('\n');
-
+  
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('-')) continue;
-
+    
     // Match: package==1.0.0, package>=1.0, package~=1.0, package, etc.
     const match = trimmed.match(/^([a-zA-Z0-9_-]+)(?:[<>=!~^].*)?$/);
     if (match) {
@@ -198,11 +209,11 @@ function extractPythonDependencies(requirementsText) {
  */
 function extractDependencies(filePath, content) {
   const name = filePath.split('/').pop().toLowerCase();
-
+  
   if (name === 'package.json') return extractNpmDependencies(content);
   if (name === 'requirements.txt') return extractPythonDependencies(content);
   // TODO: Add Cargo.toml, go.mod, Gemfile, etc. as needed
-
+  
   return [];
 }
 
@@ -210,7 +221,7 @@ function extractDependencies(filePath, content) {
 
 /**
  * Build a complete knowledge graph from all GitHub data
- *
+ * 
  * @param {string} repoUrl - Full GitHub repo URL
  * @param {Object} data - Object containing all fetched GitHub data
  * @returns {Object} { nodes: Array, edges: Array }
@@ -219,25 +230,25 @@ export function buildGraph(repoUrl, data) {
   const nodes = [];
   const edges = [];
   const nodeMap = new Map(); // label -> node for deduplication
-
+  
   // Helper to add node and return its label
   function addNode(type, label, metadata) {
     const key = `${type}:${label}`;
     if (nodeMap.has(key)) return label;
-
+    
     const node = createNode(repoUrl, type, label, metadata);
     nodes.push(node);
     nodeMap.set(key, node);
     return label;
   }
-
+  
   // Helper to add edge
   function addEdge(sourceLabel, targetLabel, relation, metadata = {}) {
     edges.push(createEdge(repoUrl, sourceLabel, targetLabel, relation, metadata));
   }
-
+  
   // ─── 1. REPO METADATA NODE ────────────────────────────────────────────────
-
+  
   if (data.metadata) {
     const meta = data.metadata;
     addNode('repo', `${meta.owner}/${meta.repo}`, {
@@ -253,16 +264,16 @@ export function buildGraph(repoUrl, data) {
       html_url: meta.html_url,
     });
   }
-
+  
   // ─── 2. FILE NODES (from file tree) ───────────────────────────────────────
-
+  
   if (data.fileTree && Array.isArray(data.fileTree)) {
     for (const file of data.fileTree) {
       if (file.type !== 'blob') continue; // Skip directories
-
+      
       const classified = classifyFile(file.path);
       const fileLabel = file.path;
-
+      
       addNode('file', fileLabel, {
         path: file.path,
         name: classified.name,
@@ -271,35 +282,35 @@ export function buildGraph(repoUrl, data) {
         size: file.size || null,
         sha: file.sha,
       });
-
+      
       // Edge: repo CONTAINS file
       if (data.metadata) {
         addEdge(`${data.metadata.owner}/${data.metadata.repo}`, fileLabel, 'CONTAINS');
       }
-
+      
       // ─── 3. FUNCTION NODES (from file contents) ─────────────────────────
-
+      
       if (classified.category === 'source' && data.fileContents && data.fileContents[file.path]) {
         const content = data.fileContents[file.path];
         const functions = extractFunctions(content, classified.ext);
-
+        
         for (const funcName of functions) {
           addNode('function', `${file.path}::${funcName}`, {
             name: funcName,
             file_path: file.path,
             language: classified.ext,
           });
-
+          
           // Edge: file CONTAINS function
           addEdge(fileLabel, `${file.path}::${funcName}`, 'CONTAINS');
         }
       }
-
+      
       // ─── 4. DEPENDENCY NODES (from config files) ────────────────────────
-
+      
       if (classified.category === 'config' && data.fileContents && data.fileContents[file.path]) {
         const deps = extractDependencies(file.path, data.fileContents[file.path]);
-
+        
         for (const dep of deps) {
           const depLabel = `${dep.type}:${dep.name}`;
           addNode('dependency', depLabel, {
@@ -309,7 +320,7 @@ export function buildGraph(repoUrl, data) {
             source_file: file.path,
             source_field: dep.source,
           });
-
+          
           // Edge: file DEPENDS_ON dependency
           addEdge(fileLabel, depLabel, 'DEPENDS_ON', {
             version: dep.version,
@@ -319,14 +330,14 @@ export function buildGraph(repoUrl, data) {
       }
     }
   }
-
+  
   // ─── 5. CONTRIBUTOR NODES ─────────────────────────────────────────────────
-
+  
   if (data.contributors && Array.isArray(data.contributors)) {
     for (const contributor of data.contributors) {
       const login = contributor.login || contributor.author?.login;
       if (!login) continue;
-
+      
       addNode('contributor', login, {
         username: login,
         avatar_url: contributor.avatar_url,
@@ -335,9 +346,9 @@ export function buildGraph(repoUrl, data) {
       });
     }
   }
-
+  
   // ─── 6. COMMIT NODES & EDGES ─────────────────────────────────────────────
-
+  
   if (data.commits && Array.isArray(data.commits)) {
     for (const commit of data.commits) {
       const sha = commit.sha?.substring(0, 7) || commit.sha;
@@ -346,7 +357,7 @@ export function buildGraph(repoUrl, data) {
       const authorEmail = commit.commit?.author?.email;
       const date = commit.commit?.author?.date || commit.commit?.committer?.date;
       const authorLogin = commit.author?.login;
-
+      
       // Use short SHA as label, full message in metadata
       const commitLabel = `commit:${sha}`;
       addNode('commit', commitLabel, {
@@ -360,12 +371,12 @@ export function buildGraph(repoUrl, data) {
         date: date,
         url: commit.html_url,
       });
-
+      
       // Edge: contributor AUTHORED commit
       if (authorLogin) {
         addEdge(authorLogin, commitLabel, 'AUTHORED', { date });
       }
-
+      
       // Edge: commit MODIFIES file (from commit.files if available)
       if (commit.files && Array.isArray(commit.files)) {
         for (const file of commit.files) {
@@ -381,9 +392,9 @@ export function buildGraph(repoUrl, data) {
       }
     }
   }
-
+  
   // ─── 7. ISSUE NODES & EDGES ──────────────────────────────────────────────
-
+  
   if (data.issues && Array.isArray(data.issues)) {
     for (const issue of data.issues) {
       const issueLabel = `issue:#${issue.number}`;
@@ -399,20 +410,20 @@ export function buildGraph(repoUrl, data) {
         comments_count: issue.comments,
         html_url: issue.html_url,
       });
-
+      
       // Edge: contributor OPENED issue
       if (issue.user?.login) {
         addEdge(issue.user.login, issueLabel, 'OPENED', {
           created_at: issue.created_at,
         });
       }
-
+      
       // Edge: issue REFERENCES file (from body mentions)
       if (issue.body && data.fileTree) {
         const filePaths = data.fileTree
           .filter(f => f.type === 'blob')
           .map(f => f.path);
-
+        
         for (const path of filePaths) {
           // Simple check: does the issue body mention the file path or name?
           const fileName = path.split('/').pop();
@@ -426,9 +437,9 @@ export function buildGraph(repoUrl, data) {
       }
     }
   }
-
+  
   // ─── 8. PULL REQUEST NODES & EDGES ───────────────────────────────────────
-
+  
   if (data.pullRequests && Array.isArray(data.pullRequests)) {
     for (const pr of data.pullRequests) {
       const prLabel = `pr:#${pr.number}`;
@@ -447,14 +458,14 @@ export function buildGraph(repoUrl, data) {
         changed_files: pr.changed_files,
         html_url: pr.html_url,
       });
-
+      
       // Edge: contributor OPENED pr
       if (pr.user?.login) {
         addEdge(pr.user.login, prLabel, 'OPENED', {
           created_at: pr.created_at,
         });
       }
-
+      
       // Edge: pr FIXES issue (from title/body mentions like "Fixes #123")
       const textToSearch = `${pr.title} ${pr.body || ''}`;
       const fixMatches = textToSearch.match(/(?:fixes|closes|resolves|fixed|close|resolve)\s+#(\d+)/gi);
@@ -466,7 +477,7 @@ export function buildGraph(repoUrl, data) {
           });
         }
       }
-
+      
       // Edge: pr MODIFIES file (from files if available)
       if (pr.files && Array.isArray(pr.files)) {
         for (const file of pr.files) {
@@ -481,20 +492,20 @@ export function buildGraph(repoUrl, data) {
       }
     }
   }
-
+  
   // ─── 9. README NODE (special handling) ───────────────────────────────────
-
+  
   if (data.readme) {
     addNode('readme', 'README', {
       content_preview: data.readme.substring(0, 2000),
       length: data.readme.length,
     });
-
+    
     if (data.metadata) {
       addEdge(`${data.metadata.owner}/${data.metadata.repo}`, 'README', 'CONTAINS');
     }
   }
-
+  
   return { nodes, edges };
 }
 
@@ -510,15 +521,15 @@ export function getGraphStats(nodes, edges) {
     nodeTypes: {},
     edgeRelations: {},
   };
-
+  
   for (const node of nodes) {
     stats.nodeTypes[node.node_type] = (stats.nodeTypes[node.node_type] || 0) + 1;
   }
-
+  
   for (const edge of edges) {
     stats.edgeRelations[edge.relation] = (stats.edgeRelations[edge.relation] || 0) + 1;
   }
-
+  
   return stats;
 }
 
@@ -539,3 +550,20 @@ export function getNodeNeighbors(nodeLabel, edges) {
 }
 
 export default buildGraph;
+```
+
+---
+
+## What This File Does (Summary)
+
+| Feature | Implementation |
+|--------|----------------|
+| **File Classification** | Categorizes files into `source`, `config`, `doc`, `readme`, `other` based on extension/filename |
+| **Function Extraction** | Language-specific regex parsers for JS/TS, Python, Go, Rust, Ruby, Java, C/C++, PHP, and shell |
+| **Dependency Parsing** | Parses `package.json` (npm) and `requirements.txt` (pip) |
+| **Node Types** | `repo`, `file`, `function`, `contributor`, `commit`, `issue`, `pr`, `dependency`, `readme` |
+| **Edge Types** | `CONTAINS`, `AUTHORED`, `MODIFIES`, `REFERENCES`, `FIXES`, `DEPENDS_ON`, `OPENED` |
+| **Deduplication** | Uses a `Map` to prevent duplicate nodes |
+| **Issue→File Linking** | Scans issue bodies for file path mentions |
+| **PR→Issue Linking** | Detects "Fixes #123", "Closes #456" patterns in PR titles/bodies |
+| **Utilities** | `getGraphStats`, `filterNodesByType`, `getNodeNeighbors` for analysis |

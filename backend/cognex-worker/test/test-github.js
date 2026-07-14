@@ -23,7 +23,7 @@ async function test() {
   console.log('✅ Metadata:', meta.name, '| ⭐', meta.stars, '| 🍴', meta.forks);
 
   const readme = await fetchReadme(owner, repo, token);
-  console.log('✅ README:', readme.content.length, 'chars');
+	console.log('✅ README:', readme.length, 'chars');
 
   const tree = await fetchFileTree(owner, repo, token);
   console.log('✅ File tree:', tree.length, 'items');

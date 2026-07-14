@@ -33,6 +33,7 @@ create table if not exists graph_edges (
 
 -- Function: match_documents
 -- Performs cosine similarity search on embeddings
+/*
 create or replace function match_documents(
     query_embedding vector(1024),
     match_threshold float,
@@ -57,4 +58,36 @@ as $$
     where 1 - (embedding <=> query_embedding) > match_threshold
     order by embedding <=> query_embedding
     limit match_count;
+$$;
+*/
+-- Drop old version and create new one with filter_repo_url
+DROP FUNCTION IF EXISTS match_documents(vector(1024), float, int);
+
+CREATE OR REPLACE FUNCTION match_documents(
+  query_embedding vector(1024),
+  match_threshold float,
+  match_count int,
+  filter_repo_url text DEFAULT NULL
+)
+RETURNS TABLE (
+  id uuid,
+  repo_url text,
+  content text,
+  metadata jsonb,
+  similarity float
+)
+LANGUAGE sql stable
+AS $$
+  SELECT
+    id,
+    repo_url,
+    content,
+    metadata,
+    1 - (embedding <=> query_embedding) AS similarity
+  FROM documents
+  WHERE 
+    (filter_repo_url IS NULL OR documents.repo_url = filter_repo_url)
+    AND 1 - (embedding <=> query_embedding) > match_threshold
+  ORDER BY embedding <=> query_embedding
+  LIMIT match_count;
 $$;
