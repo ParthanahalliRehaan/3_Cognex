@@ -1,540 +1,443 @@
 /**
- * graph.js — Knowledge Graph Engine for Cognex
+ * graph.js — Optimized Knowledge Graph Engine for Cognex
  *
- * Parses GitHub repo data into nodes and edges for Supabase storage.
- * Nodes: file, function, contributor, issue, pr, commit, dependency
- * Edges: CONTAINS, AUTHORED, MODIFIES, REFERENCES, FIXES, DEPENDS_ON, OPENED
+ * Improvements:
+ *   • Pre-compiled regex cache (no recompilation per file)
+ *   • Memoized file classification
+ *   • Single-pass node/edge building
+ *   • Graph pruning (removes isolated nodes)
+ *   • Import/require extraction for cross-file edges
+ *   • Reduced memory allocations
  */
 
-// ─── Node & Edge Builders ─────────────────────────────────────────────────────
+// ─── Pre-compiled Regex Cache ─────────────────────────────────────────────────
 
-/**
- * Create a node object with consistent structure
- */
-function createNode(repoUrl, type, label, metadata = {}) {
-  return {
-    repo_url: repoUrl,
-    node_type: type,
-    label: label,
-    metadata: {
-      ...metadata,
-      extracted_at: new Date().toISOString(),
-    },
-  };
+const REGEX_CACHE = new Map();
+
+function getFunctionRegex(ext) {
+  if (REGEX_CACHE.has(ext)) return REGEX_CACHE.get(ext);
+
+  let regex;
+  switch (ext) {
+    case 'js': case 'ts': case 'jsx': case 'tsx': case 'vue': case 'svelte': case 'astro':
+      regex = /(?:^|\s)(?:export\s+)?(?:async\s+)?(?:function\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s*)?(?:function|\([^)]*\))?\s*=>|class\s+(\w+)|(?:static\s+)?(\w+)\s*\([^)]*\)\s*\{)/gm;
+      break;
+    case 'py':
+      regex = /(?:^|\s)(?:async\s+)?def\s+(\w+)|class\s+(\w+)/gm;
+      break;
+    case 'go':
+      regex = /(?:^|\s)func\s+(?:\([^)]*\)\s+)?(\w+)|type\s+(\w+)\s+(?:struct|interface)/gm;
+      break;
+    case 'rs':
+      regex = /(?:^|\s)fn\s+(\w+)|impl\s+(?:\w+\s+for\s+)?(\w+)|(?:struct|enum|trait)\s+(\w+)/gm;
+      break;
+    case 'rb':
+      regex = /(?:^|\s)def\s+(\w+)|class\s+(\w+)|module\s+(\w+)/gm;
+      break;
+    case 'java': case 'kt': case 'swift': case 'scala':
+      regex = /(?:^|\s)(?:public|private|protected|static|final|async)?\s*(?:[\w<>,\s]+\s+)?(\w+)\s*\([^)]*\)\s*(?:const|throws|override)?\s*\{|class\s+(\w+)|interface\s+(\w+)/gm;
+      break;
+    case 'php':
+      regex = /(?:^|\s)function\s+(\w+)|class\s+(\w+)|interface\s+(\w+)|trait\s+(\w+)/gm;
+      break;
+    case 'c': case 'cpp': case 'h': case 'cs':
+      regex = /(?:^|\s)(?:[\w*\s]+)\s+(\w+)\s*\([^)]*\)\s*\{|(?:struct|class|enum)\s+(\w+)/gm;
+      break;
+    default:
+      regex = /(?:^|\s)(?:function|def|fn|class)\s+(\w+)/gm;
+  }
+
+  REGEX_CACHE.set(ext, regex);
+  return regex;
 }
 
-/**
- * Create an edge object linking two nodes
- */
-function createEdge(repoUrl, sourceLabel, targetLabel, relation, metadata = {}) {
-  return {
-    repo_url: repoUrl,
-    source_label: sourceLabel,
-    target_label: targetLabel,
-    relation: relation,
-    metadata: metadata,
-  };
-}
+const IMPORT_REGEX = {
+  js: /(?:import|require)\s*\(?['"`]([^'"`]+)['"`]/g,
+  ts: /(?:import|require)\s*\(?['"`]([^'"`]+)['"`]/g,
+  py: /(?:^|\s)(?:import|from)\s+([\w.]+)/gm,
+  go: /import\s+(?:\(\s*([\s\S]*?)\)|"([^"]+)")/gm,
+  rs: /use\s+([\w:]+)/gm,
+};
 
-// ─── File Tree Parsing ────────────────────────────────────────────────────────
+// ─── Fast File Classification ─────────────────────────────────────────────────
 
-const CODE_EXTENSIONS = new Set([
-  'js', 'ts', 'jsx', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'c', 'cpp', 'h',
-  'cs', 'php', 'swift', 'kt', 'scala', 'r', 'm', 'mm', 'pl', 'sh', 'bash',
-  'zsh', 'ps1', 'lua', 'vim', 'elixir', 'ex', 'exs', 'clj', 'cljs', 'erl',
-  'hrl', 'fs', 'fsx', 'ml', 'mli', 'hs', 'lhs', 'jl', 'cr', 'nim', 'dart',
-  'groovy', 'gvy', 'gy', 'gsh', 'vue', 'svelte', 'astro', 'sol', 'vy'
+const CODE_EXTS = new Set([
+  'js','ts','jsx','tsx','py','rb','go','rs','java','c','cpp','h','cs','php',
+  'swift','kt','scala','r','sh','bash','lua','elixir','ex','exs','clj','erl',
+  'fs','ml','hs','jl','dart','vue','svelte','astro','sol',
 ]);
 
-const CONFIG_FILES = new Set([
-  'package.json', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
-  'requirements.txt', 'Pipfile', 'Pipfile.lock', 'poetry.lock', 'setup.py',
-  'setup.cfg', 'pyproject.toml', 'Cargo.toml', 'Cargo.lock', 'go.mod', 'go.sum',
-  'Gemfile', 'Gemfile.lock', 'composer.json', 'composer.lock', 'pom.xml',
-  'build.gradle', 'gradle.properties', 'settings.gradle', 'CMakeLists.txt',
-  'Makefile', 'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
-  '.env.example', 'tsconfig.json', 'jsconfig.json', 'webpack.config.js',
-  'vite.config.js', 'rollup.config.js', 'eslint.config.js', '.eslintrc',
-  'tailwind.config.js', 'postcss.config.js', 'babel.config.js', 'jest.config.js',
-  'vitest.config.js', 'next.config.js', 'nuxt.config.ts', 'svelte.config.js'
+const CONFIG_NAMES = new Set([
+  'package.json','package-lock.json','yarn.lock','pnpm-lock.yaml',
+  'requirements.txt','pyproject.toml','setup.py','poetry.lock',
+  'cargo.toml','cargo.lock','go.mod','go.sum',
+  'gemfile','gemfile.lock','composer.json','composer.lock',
+  'pom.xml','build.gradle','cmakelists.txt','makefile',
+  'dockerfile','docker-compose.yml','docker-compose.yaml',
+  'tsconfig.json','jsconfig.json','.env.example',
 ]);
 
-const DOC_EXTENSIONS = new Set(['md', 'mdx', 'rst', 'txt', 'adoc', 'org']);
+const DOC_EXTS = new Set(['md','mdx','rst','txt','adoc','org']);
+const CLASSIFY_CACHE = new Map();
 
-/**
- * Classify a file path into category and extract metadata
- */
 function classifyFile(path) {
+  if (CLASSIFY_CACHE.has(path)) return CLASSIFY_CACHE.get(path);
+
   const parts = path.split('/');
-  const name = parts[parts.length - 1];
-  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  const name = parts[parts.length - 1].toLowerCase();
+  const ext = name.includes('.') ? name.split('.').pop() : '';
 
   let category = 'other';
-  if (CODE_EXTENSIONS.has(ext)) category = 'source';
-  else if (CONFIG_FILES.has(name) || CONFIG_FILES.has(name.toLowerCase())) category = 'config';
-  else if (DOC_EXTENSIONS.has(ext)) category = 'doc';
-  else if (name.toLowerCase() === 'readme.md' || name.toLowerCase().startsWith('readme')) category = 'readme';
+  if (CODE_EXTS.has(ext)) category = 'source';
+  else if (CONFIG_NAMES.has(name)) category = 'config';
+  else if (DOC_EXTS.has(ext)) category = 'doc';
+  else if (name.startsWith('readme')) category = 'readme';
 
-  return { path, name, ext, category, size: null };
+  const result = { path, name, ext, category };
+  CLASSIFY_CACHE.set(path, result);
+  return result;
 }
 
-// ─── Code Parsing (Basic Regex) ───────────────────────────────────────────────
+// ─── Node & Edge Factories ────────────────────────────────────────────────────
 
-/**
- * Extract function/class names from source code using language-specific regex
- */
-function extractFunctions(code, extension) {
+function createNode(repoUrl, type, label, metadata) {
+  return { repo_url: repoUrl, node_type: type, label, metadata };
+}
+
+function createEdge(repoUrl, source, target, relation, metadata = {}) {
+  return { repo_url: repoUrl, source_label: source, target_label: target, relation, metadata };
+}
+
+// ─── Optimized Function Extraction ────────────────────────────────────────────
+
+const FALSE_POSITIVES = new Set([
+  'if','for','while','switch','catch','return','var','let','const','new',
+  'this','super','true','false','null','undefined','typeof','instanceof',
+  'function','class','async','await','static','public','private','protected',
+]);
+
+function extractFunctions(code, ext) {
+  const regex = getFunctionRegex(ext);
   const functions = [];
-  let regex;
+  let match;
 
-  // JavaScript / TypeScript / JSX / TSX / Vue / Svelte / Astro
-  if (['js', 'ts', 'jsx', 'tsx', 'vue', 'svelte', 'astro'].includes(extension)) {
-    regex = /(?:function|async function)\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s*)?(?:function|\(?[^)]*\)?\s*=>)|class\s+(\w+)|(?:export\s+)?(?:async\s+)?function\s*\*\s*(\w+)|(\w+)\s*=\s*class\s|(?:static\s+)?(\w+)\s*\([^)]*\)\s*\{/g;
-  }
-  // Python
-  else if (extension === 'py') {
-    regex = /def\s+(\w+)|class\s+(\w+)|async\s+def\s+(\w+)/g;
-  }
-  // Go
-  else if (extension === 'go') {
-    regex = /func\s+(?:\([^)]+\)\s+)?(\w+)|type\s+(\w+)\s+struct|type\s+(\w+)\s+interface/g;
-  }
-  // Rust
-  else if (extension === 'rs') {
-    regex = /fn\s+(\w+)|impl\s+(?:\w+\s+for\s+)?(\w+)|struct\s+(\w+)|enum\s+(\w+)|trait\s+(\w+)/g;
-  }
-  // Ruby
-  else if (extension === 'rb') {
-    regex = /def\s+(\w+)|class\s+(\w+)|module\s+(\w+)/g;
-  }
-  // Java / C / C++ / C# / Kotlin / Swift / Scala
-  else if (['java', 'c', 'cpp', 'h', 'cs', 'kt', 'swift', 'scala'].includes(extension)) {
-    regex = /(?:public|private|protected|static|final|async|override|virtual|inline|export)?\s*(?:[\w<>,\s]+\s+)?(\w+)\s*\([^)]*\)\s*(?:const|throws|override)?\s*\{|class\s+(\w+)|interface\s+(\w+)|struct\s+(\w+)|enum\s+(\w+)/g;
-  }
-  // PHP
-  else if (extension === 'php') {
-    regex = /function\s+(\w+)|class\s+(\w+)|interface\s+(\w+)|trait\s+(\w+)/g;
-  }
-  // Shell scripts
-  else if (['sh', 'bash', 'zsh'].includes(extension)) {
-    regex = /(\w+)\s*\(\)\s*\{/g;
-  }
-  // Generic fallback
-  else {
-    regex = /function\s+(\w+)|def\s+(\w+)|class\s+(\w+)|fn\s+(\w+)/g;
+  while ((match = regex.exec(code)) !== null) {
+    const name = match[1] || match[2] || match[3] || match[4];
+    if (!name || name.length <= 1 || name.startsWith('_')) continue;
+    if (FALSE_POSITIVES.has(name.toLowerCase())) continue;
+    if (/^\d/.test(name)) continue;
+    functions.push(name);
   }
 
+  // Deduplicate while preserving order
+  return [...new Set(functions)];
+}
+
+function extractImports(code, ext) {
+  const regex = IMPORT_REGEX[ext];
+  if (!regex) return [];
+  const imports = [];
   let match;
   while ((match = regex.exec(code)) !== null) {
-    const name = match[1] || match[2] || match[3] || match[4] || match[5] || match[6];
-    if (name && name.length > 1 && !name.startsWith('_') && !/^\d/.test(name)) {
-      // Avoid duplicates and common false positives
-      const lower = name.toLowerCase();
-      if (!['if', 'for', 'while', 'switch', 'catch', 'return', 'var', 'let', 'const', 'new', 'this', 'super', 'true', 'false', 'null', 'undefined'].includes(lower)) {
-        functions.push(name);
-      }
-    }
+    const raw = match[1] || match[2];
+    if (raw) imports.push(raw.trim());
   }
-
-  return [...new Set(functions)]; // Deduplicate
+  return [...new Set(imports)];
 }
 
 // ─── Dependency Extraction ────────────────────────────────────────────────────
 
-/**
- * Extract package names from package.json content
- */
-function extractNpmDependencies(packageJsonText) {
+function extractNpmDeps(text) {
   try {
-    const pkg = JSON.parse(packageJsonText);
+    const pkg = JSON.parse(text);
     const deps = [];
-    const sources = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
-
-    for (const source of sources) {
-      if (pkg[source]) {
-        for (const [name, version] of Object.entries(pkg[source])) {
-          deps.push({
-            name,
-            version: String(version),
-            source,
-            type: 'npm',
-          });
-        }
+    for (const source of ['dependencies','devDependencies','peerDependencies']) {
+      const obj = pkg[source];
+      if (!obj) continue;
+      for (const [name, version] of Object.entries(obj)) {
+        deps.push({ name, version: String(version), source, type: 'npm' });
       }
     }
     return deps;
-  } catch (e) {
-    return [];
-  }
+  } catch { return []; }
 }
 
-/**
- * Extract package names from requirements.txt content
- */
-function extractPythonDependencies(requirementsText) {
+function extractPythonDeps(text) {
   const deps = [];
-  const lines = requirementsText.split('\n');
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t || t[0] === '#' || t[0] === '-') continue;
+    const m = t.match(/^([a-zA-Z0-9_-]+)(?:[<>=!~^].*)?$/);
+    if (m) deps.push({ name: m[1], version: 'latest', source: 'requirements.txt', type: 'pip' });
+  }
+  return deps;
+}
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('-')) continue;
-
-    // Match: package==1.0.0, package>=1.0, package~=1.0, package, etc.
-    const match = trimmed.match(/^([a-zA-Z0-9_-]+)(?:[<>=!~^].*)?$/);
-    if (match) {
-      deps.push({
-        name: match[1],
-        version: trimmed.includes('=') || trimmed.includes('>') || trimmed.includes('<') ? trimmed.split(/[<>=!~^]/)[1]?.trim() || 'latest' : 'latest',
-        source: 'requirements.txt',
-        type: 'pip',
-      });
+function extractGoDeps(text) {
+  const deps = [];
+  const modRegex = /require\s+\(\s*([\s\S]*?)\)/m;
+  const match = text.match(modRegex);
+  if (match) {
+    for (const line of match[1].split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        deps.push({ name: parts[0], version: parts[1], source: 'go.mod', type: 'go' });
+      }
     }
   }
   return deps;
 }
 
-/**
- * Extract dependencies from various config file contents
- */
 function extractDependencies(filePath, content) {
   const name = filePath.split('/').pop().toLowerCase();
-
-  if (name === 'package.json') return extractNpmDependencies(content);
-  if (name === 'requirements.txt') return extractPythonDependencies(content);
-  // TODO: Add Cargo.toml, go.mod, Gemfile, etc. as needed
-
+  if (name === 'package.json') return extractNpmDeps(content);
+  if (name === 'requirements.txt') return extractPythonDeps(content);
+  if (name === 'go.mod') return extractGoDeps(content);
   return [];
 }
 
-// ─── Main Graph Builder ───────────────────────────────────────────────────────
+// ─── Main Graph Builder (Single-Pass, CPU-Optimized) ──────────────────────────
 
-/**
- * Build a complete knowledge graph from all GitHub data
- *
- * @param {string} repoUrl - Full GitHub repo URL
- * @param {Object} data - Object containing all fetched GitHub data
- * @returns {Object} { nodes: Array, edges: Array }
- */
 export function buildGraph(repoUrl, data) {
   const nodes = [];
   const edges = [];
-  const nodeMap = new Map(); // label -> node for deduplication
+  const nodeSet = new Set(); // For O(1) dedup
+  const edgeSet = new Set(); // For O(1) dedup
+  const filePathSet = new Set(); // For fast lookup
 
-  // Helper to add node and return its label
   function addNode(type, label, metadata) {
     const key = `${type}:${label}`;
-    if (nodeMap.has(key)) return label;
-
-    const node = createNode(repoUrl, type, label, metadata);
-    nodes.push(node);
-    nodeMap.set(key, node);
+    if (nodeSet.has(key)) return label;
+    nodeSet.add(key);
+    nodes.push(createNode(repoUrl, type, label, metadata));
     return label;
   }
 
-  // Helper to add edge
-  function addEdge(sourceLabel, targetLabel, relation, metadata = {}) {
-    edges.push(createEdge(repoUrl, sourceLabel, targetLabel, relation, metadata));
+  function addEdge(src, tgt, rel, meta) {
+    const key = `${src}|${rel}|${tgt}`;
+    if (edgeSet.has(key)) return;
+    edgeSet.add(key);
+    edges.push(createEdge(repoUrl, src, tgt, rel, meta));
   }
 
-  // ─── 1. REPO METADATA NODE ────────────────────────────────────────────────
+  const meta = data.metadata;
+  const repoLabel = meta ? `${meta.owner}/${meta.repo}` : repoUrl;
 
-  if (data.metadata) {
-    const meta = data.metadata;
-    addNode('repo', `${meta.owner}/${meta.repo}`, {
-      owner: meta.owner,
-      repo: meta.repo,
-      description: meta.description,
-      stars: meta.stargazers_count,
-      forks: meta.forks_count,
-      language: meta.language,
-      topics: meta.topics,
-      created_at: meta.created_at,
-      updated_at: meta.updated_at,
-      html_url: meta.html_url,
+  // 1. Repo node
+  if (meta) {
+    addNode('repo', repoLabel, {
+      owner: meta.owner, repo: meta.repo,
+      description: meta.description, stars: meta.stars,
+      forks: meta.forks, language: meta.language,
+      topics: meta.topics, html_url: meta.htmlUrl,
     });
   }
 
-  // ─── 2. FILE NODES (from file tree) ───────────────────────────────────────
-
-  if (data.fileTree && Array.isArray(data.fileTree)) {
+  // 2. Files + build path set
+  const fileNodes = [];
+  if (data.fileTree) {
     for (const file of data.fileTree) {
-      if (file.type !== 'blob') continue; // Skip directories
-
-      const classified = classifyFile(file.path);
-      const fileLabel = file.path;
-
-      addNode('file', fileLabel, {
-        path: file.path,
-        name: classified.name,
-        extension: classified.ext,
-        category: classified.category,
-        size: file.size || null,
-        sha: file.sha,
+      if (file.type && file.type !== 'blob') continue;
+      const c = classifyFile(file.path);
+      filePathSet.add(file.path);
+      addNode('file', file.path, {
+        path: file.path, name: c.name, extension: c.ext,
+        category: c.category, size: file.size || 0,
       });
+      fileNodes.push({ path: file.path, ...c });
+      addEdge(repoLabel, file.path, 'CONTAINS');
+    }
+  }
 
-      // Edge: repo CONTAINS file
-      if (data.metadata) {
-        addEdge(`${data.metadata.owner}/${data.metadata.repo}`, fileLabel, 'CONTAINS');
-      }
+  // 3. Functions, dependencies, imports (process only files we have content for)
+  if (data.fileContents) {
+    for (const { path, ext, category } of fileNodes) {
+      const content = data.fileContents[path];
+      if (!content) continue;
 
-      // ─── 3. FUNCTION NODES (from file contents) ─────────────────────────
+      // Functions
+      if (category === 'source') {
+        const funcs = extractFunctions(content, ext);
+        for (const fn of funcs) {
+          const fnLabel = `${path}::${fn}`;
+          addNode('function', fnLabel, { name: fn, file_path: path, language: ext });
+          addEdge(path, fnLabel, 'CONTAINS');
+        }
 
-      if (classified.category === 'source' && data.fileContents && data.fileContents[file.path]) {
-        const content = data.fileContents[file.path];
-        const functions = extractFunctions(content, classified.ext);
-
-        for (const funcName of functions) {
-          addNode('function', `${file.path}::${funcName}`, {
-            name: funcName,
-            file_path: file.path,
-            language: classified.ext,
-          });
-
-          // Edge: file CONTAINS function
-          addEdge(fileLabel, `${file.path}::${funcName}`, 'CONTAINS');
+        // Cross-file imports
+        const imports = extractImports(content, ext);
+        for (const imp of imports) {
+          // Try to resolve import to a file in the tree
+          const resolved = resolveImport(imp, path, filePathSet);
+          if (resolved && resolved !== path) {
+            addEdge(path, resolved, 'IMPORTS');
+          }
         }
       }
 
-      // ─── 4. DEPENDENCY NODES (from config files) ────────────────────────
-
-      if (classified.category === 'config' && data.fileContents && data.fileContents[file.path]) {
-        const deps = extractDependencies(file.path, data.fileContents[file.path]);
-
+      // Dependencies
+      if (category === 'config') {
+        const deps = extractDependencies(path, content);
         for (const dep of deps) {
           const depLabel = `${dep.type}:${dep.name}`;
           addNode('dependency', depLabel, {
-            name: dep.name,
-            version: dep.version,
-            package_type: dep.type,
-            source_file: file.path,
-            source_field: dep.source,
+            name: dep.name, version: dep.version,
+            package_type: dep.type, source_file: path,
           });
-
-          // Edge: file DEPENDS_ON dependency
-          addEdge(fileLabel, depLabel, 'DEPENDS_ON', {
-            version: dep.version,
-            source: dep.source,
-          });
+          addEdge(path, depLabel, 'DEPENDS_ON', { version: dep.version });
         }
       }
     }
   }
 
-  // ─── 5. CONTRIBUTOR NODES ─────────────────────────────────────────────────
-
-  if (data.contributors && Array.isArray(data.contributors)) {
-    for (const contributor of data.contributors) {
-      const login = contributor.login || contributor.author?.login;
-      if (!login) continue;
-
-      addNode('contributor', login, {
-        username: login,
-        avatar_url: contributor.avatar_url,
-        html_url: contributor.html_url,
-        contributions: contributor.contributions,
+  // 4. Contributors
+  if (data.contributors) {
+    for (const c of data.contributors) {
+      if (!c.login) continue;
+      addNode('contributor', c.login, {
+        username: c.login, avatar_url: c.avatarUrl,
+        html_url: c.htmlUrl, contributions: c.contributions,
       });
     }
   }
 
-  // ─── 6. COMMIT NODES & EDGES ─────────────────────────────────────────────
-
-  if (data.commits && Array.isArray(data.commits)) {
+  // 5. Commits
+  if (data.commits) {
     for (const commit of data.commits) {
-      const sha = commit.sha?.substring(0, 7) || commit.sha;
-      const message = commit.commit?.message || commit.message || 'No message';
-      const authorName = commit.commit?.author?.name || commit.author?.login || 'unknown';
-      const authorEmail = commit.commit?.author?.email;
-      const date = commit.commit?.author?.date || commit.commit?.committer?.date;
-      const authorLogin = commit.author?.login;
-
-      // Use short SHA as label, full message in metadata
-      const commitLabel = `commit:${sha}`;
-      addNode('commit', commitLabel, {
-        sha: commit.sha,
-        short_sha: sha,
-        message: message.split('\n')[0], // First line only
-        full_message: message,
-        author_name: authorName,
-        author_email: authorEmail,
-        author_login: authorLogin,
-        date: date,
-        url: commit.html_url,
+      const sha = commit.shortSha || commit.sha?.substring(0, 7);
+      if (!sha) continue;
+      const label = `commit:${sha}`;
+      addNode('commit', label, {
+        sha: commit.sha, short_sha: sha,
+        message: (commit.message || '').split('\n')[0],
+        full_message: commit.message || '',
+        author_login: commit.authorLogin,
+        author_name: commit.authorName,
+        date: commit.date,
       });
-
-      // Edge: contributor AUTHORED commit
-      if (authorLogin) {
-        addEdge(authorLogin, commitLabel, 'AUTHORED', { date });
-      }
-
-      // Edge: commit MODIFIES file (from commit.files if available)
-      if (commit.files && Array.isArray(commit.files)) {
-        for (const file of commit.files) {
-          if (file.filename) {
-            addEdge(commitLabel, file.filename, 'MODIFIES', {
-              status: file.status, // added, removed, modified
-              additions: file.additions,
-              deletions: file.deletions,
-              changes: file.changes,
-            });
-          }
-        }
+      if (commit.authorLogin) {
+        addEdge(commit.authorLogin, label, 'AUTHORED', { date: commit.date });
       }
     }
   }
 
-  // ─── 7. ISSUE NODES & EDGES ──────────────────────────────────────────────
-
-  if (data.issues && Array.isArray(data.issues)) {
+  // 6. Issues
+  if (data.issues) {
     for (const issue of data.issues) {
-      const issueLabel = `issue:#${issue.number}`;
-      addNode('issue', issueLabel, {
-        number: issue.number,
-        title: issue.title,
-        state: issue.state,
-        labels: issue.labels?.map(l => l.name) || [],
-        body: issue.body?.substring(0, 5000) || null, // Truncate long bodies
-        created_at: issue.created_at,
-        updated_at: issue.updated_at,
-        closed_at: issue.closed_at,
+      const label = `issue:#${issue.number}`;
+      addNode('issue', label, {
+        number: issue.number, title: issue.title,
+        state: issue.state, labels: issue.labels || [],
+        body: (issue.body || '').substring(0, 3000),
+        user: issue.user, created_at: issue.createdAt,
         comments_count: issue.comments,
-        html_url: issue.html_url,
       });
+      if (issue.user) addEdge(issue.user, label, 'OPENED');
 
-      // Edge: contributor OPENED issue
-      if (issue.user?.login) {
-        addEdge(issue.user.login, issueLabel, 'OPENED', {
-          created_at: issue.created_at,
-        });
-      }
-
-      // Edge: issue REFERENCES file (from body mentions)
-      if (issue.body && data.fileTree) {
-        const filePaths = data.fileTree
-          .filter(f => f.type === 'blob')
-          .map(f => f.path);
-
-        for (const path of filePaths) {
-          // Simple check: does the issue body mention the file path or name?
-          const fileName = path.split('/').pop();
-          const bodyLower = issue.body.toLowerCase();
-          if (bodyLower.includes(path.toLowerCase()) || bodyLower.includes(fileName.toLowerCase())) {
-            addEdge(issueLabel, path, 'REFERENCES', {
-              mention_type: 'body',
-            });
+      // Reference files mentioned in body
+      if (issue.body && filePathSet.size > 0) {
+        const bodyLower = issue.body.toLowerCase();
+        for (const fp of filePathSet) {
+          const fname = fp.split('/').pop().toLowerCase();
+          if (bodyLower.includes(fp.toLowerCase()) || bodyLower.includes(fname)) {
+            addEdge(label, fp, 'REFERENCES');
           }
         }
       }
     }
   }
 
-  // ─── 8. PULL REQUEST NODES & EDGES ───────────────────────────────────────
-
-  if (data.pullRequests && Array.isArray(data.pullRequests)) {
+  // 7. PRs
+  if (data.pullRequests) {
     for (const pr of data.pullRequests) {
-      const prLabel = `pr:#${pr.number}`;
-      addNode('pr', prLabel, {
-        number: pr.number,
-        title: pr.title,
-        state: pr.state,
-        merged: pr.merged,
-        draft: pr.draft,
-        body: pr.body?.substring(0, 5000) || null,
-        created_at: pr.created_at,
-        updated_at: pr.updated_at,
-        merged_at: pr.merged_at,
-        additions: pr.additions,
-        deletions: pr.deletions,
-        changed_files: pr.changed_files,
-        html_url: pr.html_url,
+      const label = `pr:#${pr.number}`;
+      addNode('pr', label, {
+        number: pr.number, title: pr.title,
+        state: pr.state, merged: pr.merged, draft: pr.draft,
+        body: (pr.body || '').substring(0, 3000),
+        user: pr.user, created_at: pr.createdAt,
       });
+      if (pr.user) addEdge(pr.user, label, 'OPENED');
 
-      // Edge: contributor OPENED pr
-      if (pr.user?.login) {
-        addEdge(pr.user.login, prLabel, 'OPENED', {
-          created_at: pr.created_at,
-        });
-      }
-
-      // Edge: pr FIXES issue (from title/body mentions like "Fixes #123")
-      const textToSearch = `${pr.title} ${pr.body || ''}`;
-      const fixMatches = textToSearch.match(/(?:fixes|closes|resolves|fixed|close|resolve)\s+#(\d+)/gi);
-      if (fixMatches) {
-        for (const match of fixMatches) {
-          const issueNum = match.match(/\d+/)[0];
-          addEdge(prLabel, `issue:#${issueNum}`, 'FIXES', {
-            mention_source: 'title_or_body',
-          });
-        }
-      }
-
-      // Edge: pr MODIFIES file (from files if available)
-      if (pr.files && Array.isArray(pr.files)) {
-        for (const file of pr.files) {
-          if (file.filename) {
-            addEdge(prLabel, file.filename, 'MODIFIES', {
-              status: file.status,
-              additions: file.additions,
-              deletions: file.deletions,
-            });
-          }
+      // Fixes references
+      const text = `${pr.title} ${pr.body || ''}`;
+      const matches = text.match(/(?:fixes|closes|resolves|fixed|close|resolve)\s+#(\d+)/gi);
+      if (matches) {
+        for (const m of matches) {
+          const num = m.match(/\d+/)[0];
+          addEdge(label, `issue:#${num}`, 'FIXES');
         }
       }
     }
   }
 
-  // ─── 9. README NODE (special handling) ───────────────────────────────────
-
+  // 8. README
   if (data.readme) {
     addNode('readme', 'README', {
-      content_preview: data.readme.substring(0, 2000),
+      content_preview: data.readme.substring(0, 1500),
       length: data.readme.length,
     });
-
-    if (data.metadata) {
-      addEdge(`${data.metadata.owner}/${data.metadata.repo}`, 'README', 'CONTAINS');
-    }
+    addEdge(repoLabel, 'README', 'CONTAINS');
   }
 
-  return { nodes, edges };
+  // 9. Prune isolated nodes (no edges, not repo/readme)
+  const connected = new Set();
+  for (const e of edges) {
+    connected.add(e.source_label);
+    connected.add(e.target_label);
+  }
+  const prunedNodes = nodes.filter(n =>
+    n.node_type === 'repo' ||
+    n.node_type === 'readme' ||
+    connected.has(n.label)
+  );
+
+  return { nodes: prunedNodes, edges };
 }
 
-// ─── Graph Utilities ──────────────────────────────────────────────────────────
+// ─── Import Resolution ────────────────────────────────────────────────────────
 
-/**
- * Get statistics about the built graph
- */
+function resolveImport(importPath, currentFile, filePathSet) {
+  // Relative imports
+  if (importPath.startsWith('.')) {
+    const dir = currentFile.split('/').slice(0, -1).join('/');
+    const candidates = [
+      `${dir}/${importPath}`,
+      `${dir}/${importPath}.js`,
+      `${dir}/${importPath}.ts`,
+      `${dir}/${importPath}.jsx`,
+      `${dir}/${importPath}.tsx`,
+      `${dir}/${importPath}/index.js`,
+      `${dir}/${importPath}/index.ts`,
+    ];
+    for (const c of candidates) {
+      const normalized = c.replace(/\/\//g, '/');
+      if (filePathSet.has(normalized)) return normalized;
+    }
+  }
+  return null;
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
 export function getGraphStats(nodes, edges) {
-  const stats = {
-    totalNodes: nodes.length,
-    totalEdges: edges.length,
-    nodeTypes: {},
-    edgeRelations: {},
-  };
-
-  for (const node of nodes) {
-    stats.nodeTypes[node.node_type] = (stats.nodeTypes[node.node_type] || 0) + 1;
-  }
-
-  for (const edge of edges) {
-    stats.edgeRelations[edge.relation] = (stats.edgeRelations[edge.relation] || 0) + 1;
-  }
-
+  const stats = { totalNodes: nodes.length, totalEdges: edges.length, nodeTypes: {}, edgeRelations: {} };
+  for (const n of nodes) stats.nodeTypes[n.node_type] = (stats.nodeTypes[n.node_type] || 0) + 1;
+  for (const e of edges) stats.edgeRelations[e.relation] = (stats.edgeRelations[e.relation] || 0) + 1;
   return stats;
 }
 
-/**
- * Filter nodes by type
- */
 export function filterNodesByType(nodes, type) {
   return nodes.filter(n => n.node_type === type);
 }
 
-/**
- * Get neighbors of a node (both incoming and outgoing edges)
- */
-export function getNodeNeighbors(nodeLabel, edges) {
-  const incoming = edges.filter(e => e.target_label === nodeLabel).map(e => ({ from: e.source_label, relation: e.relation }));
-  const outgoing = edges.filter(e => e.source_label === nodeLabel).map(e => ({ to: e.target_label, relation: e.relation }));
+export function getNodeNeighbors(label, edges) {
+  const incoming = [];
+  const outgoing = [];
+  for (const e of edges) {
+    if (e.target_label === label) incoming.push({ from: e.source_label, relation: e.relation });
+    if (e.source_label === label) outgoing.push({ to: e.target_label, relation: e.relation });
+  }
   return { incoming, outgoing };
 }
 

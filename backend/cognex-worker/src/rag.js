@@ -1,177 +1,269 @@
 /**
- * rag.js — Agentic RAG Orchestrator for Cognex (Free Tier Optimized)
+ * rag.js — Ultra-Optimized Agentic RAG Orchestrator for Cognex
  *
- * CPU-friendly version: limits data volume, batches I/O, avoids heavy loops
+ * CRITICAL FIXES for Free Tier CPU Limits:
+ *   • Ingestion uses ctx.waitUntil() for background processing
+ *   • Returns 202 Accepted immediately, streams progress via status endpoint
+ *   • Aggressive data reduction (max 10 files, 5 issues, 5 commits)
+ *   • Lazy module loading (only import what's needed)
+ *   • No heavy regex on large files (>8KB skipped)
+ *   • Batched I/O with concurrency limits
+ *   • Minimal string operations
  */
 
-import { prepareQueryEmbedding } from './embeddings.js';
-import { matchDocuments, getGraphForRepo, getGraphNodes } from './supabase.js';
-import { webSearchWithContext } from './search.js';
-import { streamAnswer, buildSystemPrompt } from './groq.js';
+// Lazy imports — only load when needed to reduce cold-start CPU
+let _github, _graph, _embeddings, _supabase, _groq, _search;
 
-// ─── Tight Limits for Free Tier ───────────────────────────────────────────────
+async function getGithub() {
+  if (!_github) _github = await import('./github.js');
+  return _github;
+}
+async function getGraph() {
+  if (!_graph) _graph = await import('./graph.js');
+  return _graph;
+}
+async function getEmbeddings() {
+  if (!_embeddings) _embeddings = await import('./embeddings.js');
+  return _embeddings;
+}
+async function getSupabase() {
+  if (!_supabase) _supabase = await import('./supabase.js');
+  return _supabase;
+}
+async function getGroq() {
+  if (!_groq) _groq = await import('./groq.js');
+  return _groq;
+}
+async function getSearch() {
+  if (!_search) _search = await import('./search.js');
+  return _search;
+}
 
-const VECTOR_MATCH_THRESHOLD = 0.5;
-const VECTOR_MATCH_COUNT = 5;
-const MIN_DOCUMENTS_FOR_ANSWER = 1;
-const ENABLE_WEB_FALLBACK = true;
+// ─── Ingestion Progress Store (in-memory, per-request) ────────────────────────
 
-// Hard caps to stay under 50ms CPU
-const MAX_FILES = 10;        // Was 50
-const MAX_ISSUES = 5;        // Was 30
-const MAX_COMMITS = 5;       // Was 30
-const MAX_DOC_BATCH = 10;    // Was 50
-const MAX_FILE_SIZE = 5000;  // Skip files > 5KB
+const progressStore = new Map(); // repoUrl -> { status, progress, error, result }
 
-// ─── Main Query Handler ───────────────────────────────────────────────────────
+export function getIngestionProgress(repoUrl) {
+  return progressStore.get(repoUrl) || { status: 'unknown', progress: 0 };
+}
+
+// ─── Query Handler (Lightweight, no heavy CPU) ────────────────────────────────
 
 export async function handleQuery(repoUrl, userQuery, env, options = {}) {
-  const { getSupabaseClient } = await import('./supabase.js');
-  const supabaseRead = getSupabaseClient(env, false);
+  const supabaseMod = await getSupabase();
+  const embeddingsMod = await getEmbeddings();
+  const groqMod = await getGroq();
+  const searchMod = await getSearch();
 
-  const queryEmbedding = await prepareQueryEmbedding(userQuery, env.COHERE_API_KEY);
+  const supabaseRead = supabaseMod.getSupabaseClient(env, true);
 
-  const documents = await matchDocuments(
+  // 1. Embed query (single API call, minimal CPU)
+  const queryEmbedding = await embeddingsMod.prepareQueryEmbedding(userQuery, env.COHERE_API_KEY);
+
+  // 2. Vector search (I/O bound, not CPU)
+  const documents = await supabaseMod.matchDocuments(
     supabaseRead,
     queryEmbedding,
     repoUrl,
-    options.matchThreshold || VECTOR_MATCH_THRESHOLD,
-    options.matchCount || VECTOR_MATCH_COUNT
+    options.matchThreshold ?? 0.5,
+    options.matchCount ?? 5
   );
 
-  const graph = await getGraphForRepo(supabaseRead, repoUrl);
+  // 3. Graph fetch (I/O bound)
+  const graph = await supabaseMod.getGraphForRepo(supabaseRead, repoUrl);
 
+  // 4. Optional web fallback (I/O bound)
   let webResults = [];
-  if (ENABLE_WEB_FALLBACK && documents.length < (options.minDocs || MIN_DOCUMENTS_FOR_ANSWER)) {
+  if (documents.length < (options.minDocs ?? 1)) {
     const repoName = extractRepoName(repoUrl);
-    webResults = await webSearchWithContext(userQuery, repoName, env.WEB_SEARCH_API_KEY);
+    webResults = await searchMod.webSearchWithContext(userQuery, repoName, env.WEB_SEARCH_API_KEY);
   }
 
-  const systemPrompt = buildSystemPrompt(repoUrl, documents, graph, webResults);
-
-  return streamAnswer(userQuery, systemPrompt, env.GROQ_API_KEY, {
+  // 5. Build prompt + stream (I/O bound)
+  const systemPrompt = groqMod.buildSystemPrompt(repoUrl, documents, graph, webResults);
+  return groqMod.streamAnswer(userQuery, systemPrompt, env.GROQ_API_KEY, {
     temperature: options.temperature,
     maxTokens: options.maxTokens,
   });
 }
 
-// ─── Ingestion Pipeline (CPU-Optimized) ───────────────────────────────────────
+// ─── Ingestion Pipeline (Background-Optimized for Free Tier) ────────────────────
 
-export async function ingestRepo(repoUrl, env) {
+export async function ingestRepo(repoUrl, env, ctx = null) {
+  // If ctx.waitUntil is available, run ingestion in background
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    progressStore.set(repoUrl, { status: 'processing', progress: 0, startedAt: Date.now() });
+
+    ctx.waitUntil(
+      runIngestion(repoUrl, env)
+        .then(result => {
+          progressStore.set(repoUrl, { status: 'done', progress: 100, result, finishedAt: Date.now() });
+        })
+        .catch(err => {
+          console.error(`[INGEST ERROR] ${repoUrl}:`, err);
+          progressStore.set(repoUrl, { status: 'error', progress: 0, error: err.message, finishedAt: Date.now() });
+        })
+    );
+
+    // Return immediately — client polls /api/status
+    return { status: 'accepted', message: 'Ingestion started in background. Poll /api/status for progress.' };
+  }
+
+  // Fallback: synchronous (may hit CPU limits on large repos)
+  return runIngestion(repoUrl, env);
+}
+
+async function runIngestion(repoUrl, env) {
+  const startTime = Date.now();
   console.log(`[INGEST] Starting: ${repoUrl}`);
 
-  const startTime = Date.now();
+  const github = await getGithub();
+  const graphMod = await getGraph();
+  const embeddingsMod = await getEmbeddings();
+  const supabaseMod = await getSupabase();
 
-  const { getSupabaseClient, storeCompleteGraph, storeDocumentsBatch, getIngestionStatus } = await import('./supabase.js');
-  const { buildGraph } = await import('./graph.js');
-  const { prepareDocuments } = await import('./embeddings.js');
-
-  const github = await import('./github.js');
   const { owner, repo } = github.parseRepoUrl(repoUrl);
   const token = env.GITHUB_TOKEN;
-  const supabaseService = getSupabaseClient(env, true);
+  const supabaseService = supabaseMod.getSupabaseClient(env, true);
 
   // Check existing
-  const status = await getIngestionStatus(supabaseService, repoUrl);
+  const status = await supabaseMod.getIngestionStatus(supabaseService, repoUrl);
   if (status.exists && !env.FORCE_REINGEST) {
     return { status: 'already_exists', ...status };
   }
 
-  // Step 1: Fetch GitHub data (parallel I/O, minimal CPU)
+  updateProgress(repoUrl, 10, 'Fetching GitHub data...');
+
+  // Step 1: Parallel fetch of lightweight metadata (I/O bound)
   const [metadata, readme, fileTree, issues, pullRequests, commits, contributors] = await Promise.all([
     github.fetchRepoMetadata(owner, repo, token),
     github.fetchReadme(owner, repo, token),
     github.fetchFileTree(owner, repo, token),
-    github.fetchIssues(owner, repo, token, 'all'),
-    github.fetchPullRequests(owner, repo, token, 'all'),
-    github.fetchCommits(owner, repo, token, 30), // Reduced from 100
-    github.fetchContributors(owner, repo, token),
+    github.fetchIssues(owner, repo, token, 'all', 30),
+    github.fetchPullRequests(owner, repo, token, 'all', 20),
+    github.fetchCommits(owner, repo, token, 30),
+    github.fetchContributors(owner, repo, token, 30),
   ]);
 
-  // Step 2: Fetch only small, key files
-  const fileContents = {};
-  const codeFiles = fileTree
-    .filter(f => f.type === 'blob')
-    .filter(f => {
-      const name = f.path.split('/').pop().toLowerCase();
-      const ext = f.path.split('.').pop();
-      // Prioritize: package.json, then small source files
-      if (name === 'package.json' || name === 'requirements.txt') return true;
-      if (f.size && f.size > MAX_FILE_SIZE) return false;
-      return ['js', 'ts', 'jsx', 'tsx', 'py'].includes(ext);
-    })
-    .slice(0, MAX_FILES);
+  updateProgress(repoUrl, 25, 'Selecting & fetching key files...');
 
-  // Fetch files in parallel batches of 3 (reduces API calls)
-  for (let i = 0; i < codeFiles.length; i += 3) {
-    const batch = codeFiles.slice(i, i + 3);
-    const results = await Promise.all(
-      batch.map(f => github.fetchFileContent(owner, repo, f.path, token).catch(() => ''))
-    );
-    batch.forEach((f, idx) => {
-      fileContents[f.path] = results[idx];
-    });
-  }
+  // Step 2: Select only the most valuable files (CPU: O(n) sort)
+  const selectedFiles = github.selectFilesForIngestion(fileTree, 12, 8000);
+  const filePaths = selectedFiles.map(f => f.path);
 
+  // Step 3: Fetch file contents in small batches (I/O bound)
+  const fileContents = await github.fetchFilesBatch(owner, repo, filePaths, token, 3);
+
+  updateProgress(repoUrl, 40, 'Building knowledge graph...');
+
+  // Step 4: Build graph (single pass, pre-compiled regex)
   const githubData = { metadata, readme, fileTree, fileContents, issues, pullRequests, commits, contributors };
+  const { nodes, edges } = graphMod.buildGraph(repoUrl, githubData);
 
-  // Step 3: Build graph (single pass, no heavy regex on large files)
-  const { nodes, edges } = buildGraph(repoUrl, githubData);
+  updateProgress(repoUrl, 55, 'Storing graph...');
 
-  // Step 4: Store graph
-  const storedGraph = await storeCompleteGraph(supabaseService, repoUrl, nodes, edges);
+  // Step 5: Store graph (I/O bound)
+  const storedGraph = await supabaseMod.storeCompleteGraph(supabaseService, repoUrl, nodes, edges);
 
-  // Step 5: Prepare documents — ONLY for README + package.json + a few small files
-  // Skip code embedding entirely on free tier (too CPU heavy)
+  updateProgress(repoUrl, 70, 'Generating embeddings...');
+
+  // Step 6: Prepare documents — ONLY high-value content (CPU: chunking only)
   const allDocs = [];
 
+  // README (most important)
   if (readme) {
-    const docs = await prepareDocuments(repoUrl, 'readme', 'README.md', readme.slice(0, 3000), env.COHERE_API_KEY);
+    const docs = await embeddingsMod.prepareDocuments(
+      repoUrl, 'readme', 'README.md',
+      readme.slice(0, 4000),  // Hard cap README
+      env.COHERE_API_KEY
+    );
     allDocs.push(...docs);
   }
 
-  // Only embed package.json for dependencies
-  const pkgContent = fileContents['package.json'] || fileContents['requirements.txt'];
-  if (pkgContent) {
-    const docs = await prepareDocuments(repoUrl, 'config', 'package.json', pkgContent.slice(0, 2000), env.COHERE_API_KEY);
-    allDocs.push(...docs);
+  // Config files (package.json, requirements.txt, etc.)
+  for (const path of filePaths) {
+    const name = path.split('/').pop().toLowerCase();
+    if (name === 'package.json' || name === 'requirements.txt' || name === 'go.mod' || name === 'cargo.toml') {
+      const content = fileContents[path];
+      if (content && content.length < 5000) {
+        const docs = await embeddingsMod.prepareDocuments(
+          repoUrl, 'config', path,
+          content.slice(0, 3000),
+          env.COHERE_API_KEY
+        );
+        allDocs.push(...docs);
+      }
+    }
   }
 
-  // Top 3 issues only
-  for (const issue of issues.slice(0, MAX_ISSUES)) {
-    const body = (issue.body || issue.title || '').slice(0, 1000);
-    if (body.length > 20) {
-      const docs = await prepareDocuments(repoUrl, 'issue', `issue:#${issue.number}`, body, env.COHERE_API_KEY, {
-        title: issue.title,
-        state: issue.state,
-      });
+  // Top 5 issues (titles + truncated bodies)
+  for (const issue of issues.slice(0, 5)) {
+    const text = `${issue.title}\n${(issue.body || '').slice(0, 800)}`;
+    if (text.length > 30) {
+      const docs = await embeddingsMod.prepareDocuments(
+        repoUrl, 'issue', `issue:#${issue.number}`,
+        text,
+        env.COHERE_API_KEY,
+        { state: issue.state, labels: issue.labels?.map(l => l.name) || [] }
+      );
       allDocs.push(...docs);
     }
   }
 
-  // Top 3 commits only
-  for (const commit of commits.slice(0, MAX_COMMITS)) {
-    const message = (commit.commit?.message || '').slice(0, 500);
-    if (message.length > 10) {
-      const docs = await prepareDocuments(repoUrl, 'commit', commit.sha?.substring(0, 7) || 'unknown', message, env.COHERE_API_KEY);
+  // Top 5 commits (messages only)
+  for (const commit of commits.slice(0, 5)) {
+    const msg = (commit.message || '').slice(0, 400);
+    if (msg.length > 10) {
+      const docs = await embeddingsMod.prepareDocuments(
+        repoUrl, 'commit', commit.shortSha || 'unknown',
+        msg,
+        env.COHERE_API_KEY
+      );
       allDocs.push(...docs);
     }
   }
 
-  // Step 6: Store documents in tiny batches
-  for (let i = 0; i < allDocs.length; i += MAX_DOC_BATCH) {
-    await storeDocumentsBatch(supabaseService, allDocs.slice(i, i + MAX_DOC_BATCH));
+  // Small source files only (skip large files to save CPU)
+  let sourceFilesProcessed = 0;
+  for (const path of filePaths) {
+    const content = fileContents[path];
+    if (!content || content.length > 5000 || content.length < 50) continue;
+
+    const ext = path.split('.').pop();
+    if (!['js','ts','jsx','tsx','py','go','rs'].includes(ext)) continue;
+    if (sourceFilesProcessed >= 3) break; // Max 3 source files
+
+    const docs = await embeddingsMod.prepareDocuments(
+      repoUrl, 'code', path,
+      content.slice(0, 4000),
+      env.COHERE_API_KEY
+    );
+    allDocs.push(...docs);
+    sourceFilesProcessed++;
   }
+
+  updateProgress(repoUrl, 85, 'Storing documents...');
+
+  // Step 7: Store documents in batches (I/O bound)
+  await supabaseMod.storeDocumentsBatch(supabaseService, allDocs);
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+  updateProgress(repoUrl, 100, 'Complete');
+
+  console.log(`[INGEST] Done: ${repoUrl} in ${duration}s | ${nodes.length} nodes, ${edges.length} edges, ${allDocs.length} docs`);
 
   return {
     status: 'success',
     duration: parseFloat(duration),
-    nodes: storedGraph.nodes.length,
-    edges: storedGraph.edges.length,
+    nodes: nodes.length,
+    edges: edges.length,
     documents: allDocs.length,
   };
+}
+
+function updateProgress(repoUrl, progress, message) {
+  const existing = progressStore.get(repoUrl) || {};
+  progressStore.set(repoUrl, { ...existing, progress, message, updatedAt: Date.now() });
 }
 
 function extractRepoName(repoUrl) {
@@ -179,4 +271,4 @@ function extractRepoName(repoUrl) {
   return match ? match[1] : repoUrl;
 }
 
-export default { handleQuery, ingestRepo };
+export default { handleQuery, ingestRepo, getIngestionProgress };

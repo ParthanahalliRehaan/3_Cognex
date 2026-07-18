@@ -1,4 +1,4 @@
-const API_BASE = 'http://127.0.0.1:8787';
+const API_BASE = 'https://cognex-worker.parthanahalli-rehaan.workers.dev';
 
 let currentRepo = null;
 let isIngesting = false;
@@ -11,35 +11,16 @@ const els = {
   chatInput: document.getElementById('chatInput'),
   sendBtn: document.getElementById('sendBtn'),
   chatMessages: document.getElementById('chatMessages'),
-  tabs: document.querySelectorAll('.tab'),
-  tabContents: document.querySelectorAll('.tab-content'),
   graphViz: document.getElementById('graphViz'),
   filesList: document.getElementById('filesList'),
-  nodeDetails: document.getElementById('nodeDetails'),
-  nodeJson: document.getElementById('nodeJson'),
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  initTabs();
   initHints();
   initSuggestions();
   initIngest();
   initChat();
 });
-
-function initTabs() {
-  els.tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const target = tab.dataset.tab;
-      els.tabs.forEach(t => t.classList.remove('active'));
-      els.tabContents.forEach(c => c.classList.remove('active'));
-      tab.classList.add('active');
-      document.getElementById(`${target}Tab`).classList.add('active');
-      if (target === 'graph' && currentRepo) loadGraph(currentRepo);
-      if (target === 'files' && currentRepo) loadFiles(currentRepo);
-    });
-  });
-}
 
 function initHints() {
   document.querySelectorAll('.hint-btn').forEach(btn => {
@@ -76,7 +57,7 @@ async function ingestRepo() {
   if (isIngesting) return;
   isIngesting = true;
   setIngestLoading(true);
-  showStatus('🔍 Fetching repository data... This may take 1-2 minutes.', 'info');
+  showStatus('⚡ FETCHING REPOSITORY DATA... HOLD TIGHT.', 'info');
 
   try {
     const response = await fetch(`${API_BASE}/api/ingest`, {
@@ -85,32 +66,62 @@ async function ingestRepo() {
       body: JSON.stringify({ repoUrl }),
     });
     const data = await response.json();
-    if (data.success) {
+
+    if (data.success && data.status !== 'accepted') {
       currentRepo = repoUrl;
-      showStatus(`✅ Graph built! ${data.nodes} nodes, ${data.edges} edges, ${data.documents} docs in ${data.duration}s`, 'success');
+      showStatus(`✅ GRAPH BUILT — ${data.nodes} NODES · ${data.edges} EDGES · ${data.documents} DOCS · ${data.duration}S`, 'success');
       enableChat();
       loadGraph(repoUrl);
       loadFiles(repoUrl);
+    } else if (data.status === 'accepted') {
+      currentRepo = repoUrl;
+      showStatus('⏳ INGESTION ACCEPTED. POLLING STATUS...', 'info');
+      enableChat();
+      pollStatus(repoUrl);
     } else if (data.status === 'already_exists') {
       currentRepo = repoUrl;
-      showStatus(`ℹ️ Repo already ingested. ${data.nodeCount} nodes, ${data.docCount} docs.`, 'info');
+      showStatus(`ℹ️ REPO ALREADY INGESTED — ${data.nodeCount} NODES · ${data.docCount} DOCS`, 'info');
       enableChat();
+      loadGraph(repoUrl);
+      loadFiles(repoUrl);
     } else {
-      showStatus(`❌ Error: ${data.error || 'Unknown error'}`, 'error');
+      showStatus(`❌ ERROR: ${data.error || 'UNKNOWN ERROR'}`, 'error');
     }
   } catch (err) {
-    showStatus(`❌ Network error: ${err.message}`, 'error');
+    showStatus(`❌ NETWORK ERROR: ${err.message}`, 'error');
   } finally {
     isIngesting = false;
     setIngestLoading(false);
   }
 }
 
+function pollStatus(repoUrl) {
+  const interval = setInterval(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/status?repoUrl=${encodeURIComponent(repoUrl)}`);
+      const data = await res.json();
+      if (data.status === 'done') {
+        clearInterval(interval);
+        showStatus(`✅ INGESTION COMPLETE — ${data.nodeCount} NODES · ${data.docCount} DOCS`, 'success');
+        loadGraph(repoUrl);
+        loadFiles(repoUrl);
+      } else if (data.status === 'error') {
+        clearInterval(interval);
+        showStatus(`❌ INGESTION FAILED: ${data.message}`, 'error');
+      } else {
+        showStatus(`⏳ PROCESSING... ${data.progress || 0}% — ${data.message || ''}`, 'info');
+      }
+    } catch (err) {
+      clearInterval(interval);
+    }
+  }, 2000);
+}
+
 function setIngestLoading(loading) {
   els.ingestBtn.disabled = loading;
   els.ingestBtn.innerHTML = loading
-    ? '<span class="btn-icon">⏳</span><span class="btn-text">Building...</span>'
-    : '<span class="btn-icon">🔍</span><span class="btn-text">Build Graph</span>';
+    ? '<span class="btn-icon">⏳</span><span class="btn-text">BUILDING...</span>'
+    : '<span class="btn-icon">⚡</span><span class="btn-text">BUILD GRAPH</span>';
 }
 
 function showStatus(message, type) {
@@ -122,7 +133,8 @@ function showStatus(message, type) {
 function enableChat() {
   els.chatInput.disabled = false;
   els.sendBtn.disabled = false;
-  els.chatInput.placeholder = `Ask about ${currentRepo.split('/').pop()}...`;
+  els.chatInput.placeholder = `> Ask about ${currentRepo.split('/').pop()}...`;
+  els.chatInput.focus();
 }
 
 function initChat() {
@@ -159,19 +171,19 @@ async function sendMessage() {
     }
     assistantMsg.classList.remove('streaming');
   } catch (err) {
-    assistantMsg.textContent = `❌ Error: ${err.message}. Make sure the backend is running.`;
+    assistantMsg.textContent = `❌ ERROR: ${err.message}. MAKE SURE THE BACKEND IS RUNNING.`;
     assistantMsg.classList.remove('streaming');
   }
 }
 
 function addMessage(role, text, streaming = false) {
-  const welcome = els.chatMessages.querySelector('.welcome-message');
+  const welcome = els.chatMessages.querySelector('.welcome');
   if (welcome) welcome.remove();
   const msg = document.createElement('div');
   msg.className = `message ${role}${streaming ? ' streaming' : ''}`;
   const header = document.createElement('div');
   header.className = 'message-header';
-  header.textContent = role === 'user' ? 'You' : '🧠 Cognex';
+  header.textContent = role === 'user' ? 'YOU' : 'COGNEX';
   const content = document.createElement('div');
   content.className = 'message-content';
   content.textContent = text;
@@ -188,36 +200,62 @@ function scrollToBottom() {
 
 async function loadGraph(repoUrl) {
   if (!repoUrl) return;
-  els.graphViz.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading graph...</p></div>';
+  els.graphViz.innerHTML = '<div class="empty-state"><div class="empty-ascii">⏳</div><p>LOADING GRAPH...</p></div>';
   try {
     const response = await fetch(`${API_BASE}/api/graph?repoUrl=${encodeURIComponent(repoUrl)}`);
     const data = await response.json();
-    if (data.nodes.length === 0) {
-      els.graphViz.innerHTML = '<div class="empty-state"><div class="empty-icon">🕸️</div><p>No graph data yet</p></div>';
+    console.log('[GRAPH] response:', data);
+
+    if (!data.nodes || data.nodes.length === 0) {
+      els.graphViz.innerHTML = '<div class="empty-state"><div class="empty-ascii">┌─┐<br>│ │<br>└─┘</div><p>NO GRAPH DATA</p></div>';
       return;
     }
     renderCytoscape(data.nodes, data.edges);
   } catch (err) {
-    els.graphViz.innerHTML = `<div class="empty-state"><div class="empty-icon">❌</div><p>Error: ${err.message}</p></div>`;
+    console.error('[GRAPH] error:', err);
+    els.graphViz.innerHTML = `<div class="empty-state"><div class="empty-ascii">✖</div><p>ERROR: ${err.message}</p></div>`;
   }
 }
 
 function renderCytoscape(nodes, edges) {
+  // FIX: remove loading spinner only, don't clear entire container
+  const emptyState = els.graphViz.querySelector('.empty-state');
+  if (emptyState) emptyState.remove();
+
+  // FIX: force height if flex collapsed the empty container
+  if (els.graphViz.clientHeight < 100) {
+    els.graphViz.style.height = '300px';
+  }
+
+  if (cy) {
+    try { cy.destroy(); } catch (e) { /* ignore */ }
+  }
+
   const colorMap = {
-    file: '#6366f1', function: '#8b5cf6', contributor: '#22c55e',
-    issue: '#ef4444', pr: '#f59e0b', commit: '#3b82f6',
-    dependency: '#ec4899', repo: '#f97316', readme: '#14b8a6',
+    file: '#0a0a0a', function: '#333333', contributor: '#c8ff00',
+    issue: '#0a0a0a', pr: '#c8ff00', commit: '#555555',
+    dependency: '#0a0a0a', repo: '#c8ff00', readme: '#0a0a0a',
   };
+  const borderMap = {
+    contributor: '#0a0a0a', pr: '#0a0a0a', repo: '#0a0a0a',
+  };
+
   const cyNodes = nodes.map(n => ({
     data: {
       id: n.id,
-      label: n.label.length > 30 ? n.label.substring(0, 30) + '...' : n.label,
+      label: n.label.length > 24 ? n.label.substring(0, 24) + '...' : n.label,
       fullLabel: n.label,
       type: n.node_type,
       ...n.metadata,
     },
-    style: { 'background-color': colorMap[n.node_type] || '#6b7280' },
+    style: {
+      'background-color': colorMap[n.node_type] || '#0a0a0a',
+      'border-color': borderMap[n.node_type] || '#c8ff00',
+      'border-width': 2,
+      'color': ['contributor', 'pr', 'repo'].includes(n.node_type) ? '#0a0a0a' : '#ffffff',
+    },
   }));
+
   const cyEdges = edges.map(e => ({
     data: {
       id: e.id,
@@ -226,89 +264,93 @@ function renderCytoscape(nodes, edges) {
       label: e.relation,
     },
   }));
-  if (cy) cy.destroy();
-  cy = cytoscape({
-    container: els.graphViz,
-    elements: [...cyNodes, ...cyEdges],
-    style: [
-      {
-        selector: 'node',
-        style: {
-          'label': 'data(label)',
-          'width': 40,
-          'height': 40,
-          'font-size': '10px',
-          'text-valign': 'bottom',
-          'text-halign': 'center',
-          'color': '#a0a0b8',
-          'text-background-color': '#0a0a0f',
-          'text-background-opacity': 0.8,
-          'text-background-padding': '2px',
-          'border-width': 2,
-          'border-color': '#2a2a4a',
+
+  try {
+    cy = cytoscape({
+      container: els.graphViz,
+      elements: [...cyNodes, ...cyEdges],
+      style: [
+        {
+          selector: 'node',
+          style: {
+            'label': 'data(label)',
+            'width': 36,
+            'height': 36,
+            'font-size': '9px',
+            'font-family': 'Syne Mono, monospace',
+            'text-valign': 'bottom',
+            'text-halign': 'center',
+            'text-background-color': '#ffffff',
+            'text-background-opacity': 0.9,
+            'text-background-padding': '2px',
+            'text-margin-y': 4,
+          },
         },
-      },
-      {
-        selector: 'edge',
-        style: {
-          'width': 1,
-          'line-color': '#3a3a6a',
-          'target-arrow-color': '#3a3a6a',
-          'target-arrow-shape': 'triangle',
-          'curve-style': 'bezier',
-          'label': 'data(label)',
-          'font-size': '8px',
-          'color': '#6a6a8a',
-          'text-rotation': 'autorotate',
+        {
+          selector: 'edge',
+          style: {
+            'width': 1.5,
+            'line-color': '#cccccc',
+            'target-arrow-color': '#cccccc',
+            'target-arrow-shape': 'triangle',
+            'curve-style': 'bezier',
+            'label': 'data(label)',
+            'font-size': '8px',
+            'font-family': 'Syne Mono, monospace',
+            'color': '#888888',
+            'text-rotation': 'autorotate',
+          },
         },
-      },
-      {
-        selector: ':selected',
-        style: {
-          'border-width': 3,
-          'border-color': '#6366f1',
+        {
+          selector: ':selected',
+          style: {
+            'border-width': 3,
+            'border-color': '#0a0a0a',
+            'background-color': '#c8ff00',
+          },
         },
+      ],
+      layout: {
+        name: 'cose',
+        padding: 16,
+        animate: true,
+        animationDuration: 400,
+        componentSpacing: 60,
+        nodeRepulsion: 300000,
+        idealEdgeLength: 80,
       },
-    ],
-    layout: {
-      name: 'cose',
-      padding: 20,
-      animate: true,
-      animationDuration: 500,
-      componentSpacing: 80,
-      nodeRepulsion: 400000,
-      idealEdgeLength: 100,
-    },
-    minZoom: 0.2,
-    maxZoom: 3,
-  });
-  cy.on('tap', 'node', (evt) => {
-    const node = evt.target;
-    const data = node.data();
-    els.nodeDetails.classList.remove('hidden');
-    els.nodeJson.textContent = JSON.stringify({
-      id: data.id,
-      type: data.type,
-      label: data.fullLabel,
-      ...Object.fromEntries(
-        Object.entries(data).filter(([k]) => !['id', 'label', 'fullLabel', 'type'].includes(k))
-      ),
-    }, null, 2);
-  });
-  cy.on('tap', (evt) => {
-    if (evt.target === cy) els.nodeDetails.classList.add('hidden');
-  });
+      minZoom: 0.2,
+      maxZoom: 3,
+    });
+
+    cy.on('tap', 'node', (evt) => {
+      const node = evt.target;
+      const data = node.data();
+      const detail = JSON.stringify({
+        id: data.id,
+        type: data.type,
+        label: data.fullLabel,
+        ...Object.fromEntries(
+          Object.entries(data).filter(([k]) => !['id', 'label', 'fullLabel', 'type'].includes(k))
+        ),
+      }, null, 2);
+      addMessage('assistant', `NODE DETAILS:\n${detail}`, false);
+    });
+  } catch (err) {
+    console.error('[CYTOSCAPE] init error:', err);
+    els.graphViz.innerHTML = `<div class="empty-state"><div class="empty-ascii">✖</div><p>GRAPH RENDER ERROR: ${err.message}</p></div>`;
+  }
 }
 
 async function loadFiles(repoUrl) {
   if (!repoUrl) return;
-  els.filesList.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading files...</p></div>';
+  els.filesList.innerHTML = '<div class="empty-state"><div class="empty-ascii">⏳</div><p>LOADING FILES...</p></div>';
   try {
     const response = await fetch(`${API_BASE}/api/graph?repoUrl=${encodeURIComponent(repoUrl)}`);
     const data = await response.json();
     const files = data.nodes.filter(n => n.node_type === 'file');
     if (files.length === 0) {
-      els.filesList.innerHTML = '<div class="empty-state"><div class="empty-icon">📁</div><p>No files found</p></div>';
+      els.filesList.innerHTML = '<div class="empty-state"><div class="empty-ascii">📂</div><p>NO FILES FOUND</p></div>';
       return;
     }
     els.filesList.innerHTML = '';
@@ -326,24 +368,24 @@ async function loadFiles(repoUrl) {
       els.filesList.appendChild(item);
     });
   } catch (err) {
-    els.filesList.innerHTML = `<div class="empty-state"><div class="empty-icon">❌</div><p>Error: ${err.message}</p></div>`;
+    els.filesList.innerHTML = `<div class="empty-state"><div class="empty-ascii">✖</div><p>ERROR: ${err.message}</p></div>`;
   }
 }
 
 function getFileIcon(ext) {
   const icons = {
-    js: '📜', ts: '📘', jsx: '⚛️', tsx: '⚛️',
-    py: '🐍', go: '🔵', rs: '⚙️', java: '☕',
-    json: '📋', md: '📝', yml: '⚙️', yaml: '⚙️',
-    html: '🌐', css: '🎨', svg: '🖼️',
+    js: '📜', ts: '📘', jsx: '⚛', tsx: '⚛',
+    py: '🐍', go: '🔵', rs: '⚙', java: '☕',
+    json: '📋', md: '📝', yml: '⚙', yaml: '⚙',
+    html: '🌐', css: '🎨', svg: '🖼',
   };
   return icons[ext] || '📄';
 }
 
 function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return '0B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + sizes[i];
 }

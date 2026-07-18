@@ -3,111 +3,90 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cognex — AI-Powered Repo Intelligence</title>
-  <link rel="stylesheet" href="style.css">
+  <title>Cognex</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=Syne+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="app">
-    <header class="header">
+    <header>
       <div class="logo">
-        <span class="logo-icon">🧠</span>
-        <h1>Cognex</h1>
+        <h1>COGNEX</h1>
       </div>
       <p class="tagline">Ask anything about any GitHub repository</p>
     </header>
 
-    <main class="main">
-      <section class="repo-section" id="repoSection">
-        <div class="input-group">
-          <input type="text" id="repoUrl" placeholder="https://github.com/vercel/next.js" class="repo-input">
-          <button id="ingestBtn" class="btn btn-primary">
-            <span class="btn-icon">🔍</span>
-            <span class="btn-text">Build Graph</span>
-          </button>
-        </div>
-        <div class="repo-hints">
-          <span class="hint">Try:</span>
-          <button class="hint-btn" data-repo="https://github.com/vercel/next.js">next.js</button>
-          <button class="hint-btn" data-repo="https://github.com/facebook/react">react</button>
-          <button class="hint-btn" data-repo="https://github.com/torvalds/linux">linux</button>
-        </div>
-        <div id="ingestStatus" class="status hidden"></div>
-      </section>
+    <section class="repo-bar">
+      <div class="input-row">
+        <input type="text" id="repoUrl" placeholder="https://github.com/vercel/next.js" autocomplete="off">
+        <button id="ingestBtn">
+          <span class="btn-icon">🗲</span>
+          <span class="btn-text">BUILD GRAPH</span>
+        </button>
+      </div>
+      <div class="hints">
+        <span>Try:</span>
+        <button class="hint-btn" data-repo="https://github.com/vercel/next.js">next.js</button>
+        <button class="hint-btn" data-repo="https://github.com/facebook/react">react</button>
+        <button class="hint-btn" data-repo="https://github.com/torvalds/linux">linux</button>
+      </div>
+      <div id="ingestStatus" class="status hidden"></div>
+    </section>
 
-      <nav class="tabs" id="tabs">
-        <button class="tab active" data-tab="chat">💬 Chat</button>
-        <button class="tab" data-tab="graph">🕸️ Graph</button>
-        <button class="tab" data-tab="files">📁 Files</button>
-      </nav>
-
-      <section class="tab-content active" id="chatTab">
-        <div class="chat-container">
-          <div id="chatMessages" class="chat-messages">
-            <div class="welcome-message">
-              <div class="welcome-icon">👋</div>
-              <h3>Welcome to Cognex</h3>
-              <p>Enter a GitHub repo URL above, then ask me anything about it.</p>
-              <div class="suggested-questions">
-                <button class="suggestion" data-q="Who are the top contributors?">Who are the top contributors?</button>
-                <button class="suggestion" data-q="What are the main dependencies?">What are the main dependencies?</button>
-                <button class="suggestion" data-q="Explain the architecture">Explain the architecture</button>
-              </div>
+    <main class="dashboard">
+      <div class="chat-panel">
+        <div class="panel-header">
+          <span class="panel-dot"></span>
+          <h2>CHAT</h2>
+        </div>
+        <div id="chatMessages" class="chat-messages">
+          <div class="welcome">
+            <div class="welcome-ascii">[>_]</div>
+            <p>Enter a GitHub repo URL above, then ask me anything about it.</p>
+            <div class="suggestions">
+              <button class="suggestion" data-q="Who are the top contributors?">top contributors?</button>
+              <button class="suggestion" data-q="What are the main dependencies?">dependencies?</button>
+              <button class="suggestion" data-q="Explain the architecture">architecture?</button>
             </div>
           </div>
-          <div class="chat-input-group">
-            <input type="text" id="chatInput" placeholder="Ask about this repo..." class="chat-input" disabled>
-            <button id="sendBtn" class="btn btn-send" disabled>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
-          </div>
         </div>
-      </section>
+        <div class="chat-input-row">
+          <input type="text" id="chatInput" placeholder="Ask about this repo..." disabled autocomplete="off">
+          <button id="sendBtn" disabled>➜</button>
+        </div>
+      </div>
 
-      <section class="tab-content" id="graphTab">
-        <div class="graph-container">
+      <div class="side-panels">
+        <div class="graph-panel">
+          <div class="panel-header">
+            <span class="panel-dot"></span>
+            <h2>GRAPH</h2>
+          </div>
           <div id="graphViz" class="graph-viz">
             <div class="empty-state">
-              <div class="empty-icon">🕸️</div>
-              <p>Build a graph first to see the knowledge network</p>
-            </div>
-          </div>
-          <div class="graph-sidebar">
-            <h4>Node Types</h4>
-            <div class="legend">
-              <span class="legend-item"><span class="dot file"></span> File</span>
-              <span class="legend-item"><span class="dot function"></span> Function</span>
-              <span class="legend-item"><span class="dot contributor"></span> Contributor</span>
-              <span class="legend-item"><span class="dot issue"></span> Issue</span>
-              <span class="legend-item"><span class="dot pr"></span> PR</span>
-              <span class="legend-item"><span class="dot commit"></span> Commit</span>
-              <span class="legend-item"><span class="dot dependency"></span> Dependency</span>
-            </div>
-            <div id="nodeDetails" class="node-details hidden">
-              <h4>Details</h4>
-              <pre id="nodeJson"></pre>
+              <div class="empty-ascii">┌─┐<br>│ │<br>└─┘</div>
+              <p>Build a graph first</p>
             </div>
           </div>
         </div>
-      </section>
 
-      <section class="tab-content" id="filesTab">
-        <div class="files-container">
+        <div class="files-panel">
+          <div class="panel-header">
+            <span class="panel-dot"></span>
+            <h2>FILES</h2>
+          </div>
           <div id="filesList" class="files-list">
             <div class="empty-state">
-              <div class="empty-icon">📁</div>
-              <p>Build a graph first to see repository files</p>
+              <div class="empty-ascii">📂</div>
+              <p>No files yet</p>
             </div>
           </div>
         </div>
-      </section>
+      </div>
     </main>
 
-    <footer class="footer">
+    <footer>
       <p>Powered by Groq · Cohere · Supabase · Cloudflare</p>
     </footer>
   </div>

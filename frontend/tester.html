@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cognex API Tester</title>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=Syne+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-secondary: #fafafa;
+      --lime: #c8ff00;
+      --lime-dark: #b3e600;
+      --text: #0a0a0a;
+      --text-secondary: #555555;
+      --text-muted: #888888;
+      --border: #e0e0e0;
+      --border-dark: #0a0a0a;
+      --radius: 4px;
+      --font-heading: 'VT323', monospace;
+      --font-body: 'Syne Mono', monospace;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 24px;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 {
+      font-family: var(--font-heading);
+      font-size: 42px;
+      letter-spacing: 2px;
+      margin-bottom: 4px;
+    }
+    .subtitle { color: var(--text-secondary); margin-bottom: 24px; }
+
+    .section {
+      border: 2px solid var(--border-dark);
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: var(--bg-secondary);
+      border-bottom: 2px solid var(--border-dark);
+    }
+    .section-header h2 {
+      font-family: var(--font-heading);
+      font-size: 20px;
+      letter-spacing: 1px;
+    }
+    .dot {
+      width: 10px; height: 10px;
+      background: var(--lime);
+      border: 2px solid var(--border-dark);
+      border-radius: 50%;
+    }
+    .section-body { padding: 14px; }
+
+    .field-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+    label {
+      min-width: 80px;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 10px 12px;
+      border: 2px solid var(--border-dark);
+      border-radius: var(--radius);
+      font-family: var(--font-body);
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: var(--lime);
+      box-shadow: 0 0 0 3px rgba(200,255,0,0.3);
+    }
+    input[type="text"]::placeholder { color: var(--text-muted); }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    button {
+      padding: 8px 16px;
+      background: var(--lime);
+      color: var(--text);
+      border: 2px solid var(--border-dark);
+      border-radius: var(--radius);
+      font-family: var(--font-heading);
+      font-size: 18px;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    button:hover:not(:disabled) {
+      background: var(--lime-dark);
+      transform: translateY(-1px);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background: var(--bg);
+      font-size: 14px;
+    }
+    button.secondary:hover:not(:disabled) {
+      background: var(--bg-secondary);
+    }
+
+    .response {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border-dark);
+      border-radius: var(--radius);
+      padding: 12px;
+      min-height: 60px;
+      font-family: var(--font-body);
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      overflow-x: auto;
+      max-height: 400px;
+      overflow-y: auto;
+      position: relative;
+    }
+    .response:empty::before {
+      content: 'Response will appear here...';
+      color: var(--text-muted);
+    }
+    .response-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px dashed var(--border);
+    }
+    .status-badge {
+      padding: 2px 8px;
+      border-radius: var(--radius);
+      font-size: 11px;
+      border: 1px solid var(--border-dark);
+      background: var(--lime);
+    }
+    .status-badge.error { background: #ffcccc; }
+    .status-badge.info { background: #fff3cd; }
+    .copy-btn {
+      padding: 2px 8px;
+      font-size: 11px;
+      background: var(--bg);
+    }
+
+    .stream-box {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border-dark);
+      border-radius: var(--radius);
+      padding: 12px;
+      min-height: 100px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: var(--font-body);
+      font-size: 12px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+    .stream-box:empty::before {
+      content: 'Streaming answer will appear here...';
+      color: var(--text-muted);
+    }
+    .stream-cursor::after {
+      content: '▋';
+      animation: blink 1s step-end infinite;
+      color: var(--lime);
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .hints {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .hint-btn {
+      padding: 3px 10px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-secondary);
+      font-family: var(--font-body);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .hint-btn:hover {
+      border-color: var(--lime);
+      background: var(--lime);
+      color: var(--text);
+    }
+
+    .log {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border-dark);
+      border-radius: var(--radius);
+      padding: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .log-line { margin-bottom: 4px; }
+    .log-time { color: var(--text-muted); margin-right: 8px; }
+    .log-ok { color: var(--text); }
+    .log-err { color: #cc0000; }
+    .log-info { color: var(--text-secondary); }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+<base target="_blank">
+</head>
+<body>
+  <div class="container">
+    <h1>COGNEX API TESTER</h1>
+    <p class="subtitle">GUI for testing every backend endpoint</p>
+
+    <!-- Config -->
+    <div class="section">
+      <div class="section-header"><span class="dot"></span><h2>CONFIG</h2></div>
+      <div class="section-body">
+        <div class="field-row">
+          <label>Base URL</label>
+          <input type="text" id="baseUrl" value="http://127.0.0.1:8787">
+        </div>
+        <div class="field-row">
+          <label>Repo URL</label>
+          <input type="text" id="repoUrl" value="https://github.com/chalk/chalk" placeholder="https://github.com/owner/repo">
+        </div>
+        <div class="hints">
+          <span style="color:var(--text-muted);font-size:11px;">Quick:</span>
+          <button class="hint-btn" onclick="setRepo('https://github.com/chalk/chalk')">chalk</button>
+          <button class="hint-btn" onclick="setRepo('https://github.com/sindresorhus/is')">is</button>
+          <button class="hint-btn" onclick="setRepo('https://github.com/ai/nanoid')">nanoid</button>
+          <button class="hint-btn" onclick="setRepo('https://github.com/octocat/Hello-World')">hello-world</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Health -->
+    <div class="section">
+      <div class="section-header"><span class="dot"></span><h2>GET /health</h2></div>
+      <div class="section-body">
+        <div class="btn-row">
+          <button onclick="testHealth()">SEND</button>
+        </div>
+        <div id="resHealth" class="response"></div>
+      </div>
+    </div>
+
+    <!-- Ingest -->
+    <div class="section">
+      <div class="section-header"><span class="dot"></span><h2>POST /api/ingest</h2></div>
+      <div class="section-body">
+        <div class="btn-row">
+          <button onclick="testIngest()">SEND</button>
+          <button class="secondary" onclick="pollStatus()">POLL STATUS</button>
+        </div>
+        <div id="resIngest" class="response"></div>
+      </div>
+    </div>
+
+    <!-- Status -->
+    <div class="section">
+      <div class="section-header"><span class="dot"></span><h2>GET /api/status</h2></div>
+      <div class="section-body">
+        <div class="btn-row">
+          <button onclick="testStatus()">SEND</button>
+        </div>
+        <div id="resStatus" class="response"></div>
+      </div>
+    </div>
+
+    <!-- Graph -->
+    <div class="section">
+      <div class="section-header"><span class="dot"></span><h2>GET /api/graph</h2></div>
+      <div class="section-body">
+        <div class="btn-row">
+          <button onclick="testGraph()">SEND</button>
+        </div>
+        <div id="resGraph" class="response"></div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="section">
+      <div class="section-header"><span class="dot"></span><h2>GET /api/stats</h2></div>
+      <div class="section-body">
+        <div class="btn-row">
+          <button onclick="testStats()">SEND</button>
+        </div>
+        <div id="resStats" class="response"></div>
+      </div>
+    </div>
+
+    <!-- Ask -->
+    <div class="section">
+      <div class="section-header"><span class="dot"></span><h2>POST /api/ask</h2></div>
+      <div class="section-body">
+        <div class="field-row">
+          <label>Query</label>
+          <input type="text" id="query" value="What are the main dependencies?" placeholder="Ask something...">
+        </div>
+        <div class="hints">
+          <button class="hint-btn" onclick="setQuery('Who are the top contributors?')">contributors</button>
+          <button class="hint-btn" onclick="setQuery('What are the main dependencies?')">dependencies</button>
+          <button class="hint-btn" onclick="setQuery('Explain the architecture')">architecture</button>
+          <button class="hint-btn" onclick="setQuery('What does this repo do?')">what does it do</button>
+        </div>
+        <div class="btn-row" style="margin-top:12px;">
+          <button onclick="testAsk()">SEND</button>
+          <button class="secondary" onclick="clearStream()">CLEAR</button>
+        </div>
+        <div id="resAsk" class="stream-box"></div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="section">
+      <div class="section-header"><span class="dot"></span><h2>LOG</h2></div>
+      <div class="section-body">
+        <div class="btn-row">
+          <button class="secondary" onclick="clearLog()">CLEAR LOG</button>
+        </div>
+        <div id="log" class="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const base = () => $('baseUrl').value.replace(/\/$/, '');
+    const repo = () => $('repoUrl').value.trim();
+
+    function now() {
+      return new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function log(msg, type = 'info') {
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      line.innerHTML = `<span class="log-time">${now()}</span><span class="log-${type}">${msg}</span>`;
+      $('log').prepend(line);
+    }
+
+    function setRepo(url) { $('repoUrl').value = url; }
+    function setQuery(q) { $('query').value = q; }
+    function clearLog() { $('log').innerHTML = ''; }
+    function clearStream() { $('resAsk').textContent = ''; }
+
+    function showResponse(elId, data, status) {
+      const el = $(elId);
+      const isError = status >= 400;
+      const badgeClass = isError ? 'error' : (status ? '' : 'info');
+      const badgeText = status ? `HTTP ${status}` : '...';
+      const body = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      el.innerHTML = `
+        <div class="response-meta">
+          <span class="status-badge ${badgeClass}">${badgeText}</span>
+          <button class="copy-btn secondary" onclick="navigator.clipboard.writeText(this.parentElement.nextElementSibling.textContent);this.textContent='COPIED!';setTimeout(()=>this.textContent='COPY',1000)">COPY</button>
+        </div>
+        <pre style="margin:0;font-family:inherit;font-size:inherit;">${escapeHtml(body)}</pre>
+      `;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function testHealth() {
+      log('Testing /health...', 'info');
+      try {
+        const r = await fetch(`${base()}/health`, { signal: AbortSignal.timeout(10000) });
+        const data = await r.json();
+        showResponse('resHealth', data, r.status);
+        log('/health OK', 'ok');
+      } catch (e) {
+        showResponse('resHealth', e.message, 0);
+        log(`/health FAILED: ${e.message}`, 'err');
+      }
+    }
+
+    async function testIngest() {
+      const url = repo();
+      if (!url) { log('Repo URL is empty', 'err'); return; }
+      log(`Ingesting ${url}...`, 'info');
+      try {
+        const r = await fetch(`${base()}/api/ingest`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repoUrl: url }),
+          signal: AbortSignal.timeout(60000)
+        });
+        const data = await r.json();
+        showResponse('resIngest', data, r.status);
+        if (data.status === 'accepted') {
+          log('Ingest accepted (202) — background processing', 'info');
+        } else if (data.status === 'already_exists') {
+          log('Repo already ingested', 'ok');
+        } else if (data.success) {
+          log(`Ingest done: ${data.nodes} nodes, ${data.edges} edges`, 'ok');
+        } else {
+          log(`Ingest error: ${data.error || 'unknown'}`, 'err');
+        }
+      } catch (e) {
+        showResponse('resIngest', e.message, 0);
+        log(`/ingest FAILED: ${e.message}`, 'err');
+      }
+    }
+
+    async function testStatus() {
+      const url = repo();
+      if (!url) { log('Repo URL is empty', 'err'); return; }
+      log('Checking status...', 'info');
+      try {
+        const r = await fetch(`${base()}/api/status?repoUrl=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(10000) });
+        const data = await r.json();
+        showResponse('resStatus', data, r.status);
+        log(`Status: ${data.status}`, data.status === 'done' ? 'ok' : 'info');
+      } catch (e) {
+        showResponse('resStatus', e.message, 0);
+        log(`/status FAILED: ${e.message}`, 'err');
+      }
+    }
+
+    async function pollStatus() {
+      const url = repo();
+      if (!url) { log('Repo URL is empty', 'err'); return; }
+      log('Starting status poll loop...', 'info');
+      let attempts = 0;
+      const maxAttempts = 60;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const r = await fetch(`${base()}/api/status?repoUrl=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(10000) });
+          const data = await r.json();
+          showResponse('resStatus', data, r.status);
+          log(`Poll #${attempts}: ${data.status} — ${data.progress || 0}%`, 'info');
+          if (data.status === 'done') {
+            clearInterval(interval);
+            log('Polling complete — ingestion done', 'ok');
+          } else if (data.status === 'error') {
+            clearInterval(interval);
+            log('Polling stopped — ingestion error', 'err');
+          } else if (attempts >= maxAttempts) {
+            clearInterval(interval);
+            log('Polling timed out after 60 attempts', 'err');
+          }
+        } catch (e) {
+          clearInterval(interval);
+          log(`Poll error: ${e.message}`, 'err');
+        }
+      }, 2000);
+    }
+
+    async function testGraph() {
+      const url = repo();
+      if (!url) { log('Repo URL is empty', 'err'); return; }
+      log('Fetching graph...', 'info');
+      try {
+        const r = await fetch(`${base()}/api/graph?repoUrl=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(10000) });
+        const data = await r.json();
+        // Summarize instead of dumping everything
+        const summary = {
+          nodeCount: data.nodeCount,
+          edgeCount: data.edgeCount,
+          nodeTypes: data.nodes ? [...new Set(data.nodes.map(n => n.node_type))] : [],
+          edgeRelations: data.edges ? [...new Set(data.edges.map(e => e.relation))] : [],
+          sampleNodes: data.nodes ? data.nodes.slice(0, 3).map(n => ({ type: n.node_type, label: n.label })) : [],
+        };
+        showResponse('resGraph', summary, r.status);
+        log(`Graph: ${data.nodeCount} nodes, ${data.edgeCount} edges`, 'ok');
+      } catch (e) {
+        showResponse('resGraph', e.message, 0);
+        log(`/graph FAILED: ${e.message}`, 'err');
+      }
+    }
+
+    async function testStats() {
+      const url = repo();
+      if (!url) { log('Repo URL is empty', 'err'); return; }
+      log('Fetching stats...', 'info');
+      try {
+        const r = await fetch(`${base()}/api/stats?repoUrl=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(10000) });
+        const data = await r.json();
+        showResponse('resStats', data, r.status);
+        log(`Stats: ${data.stats?.totalNodes} nodes, ${data.stats?.totalEdges} edges`, 'ok');
+      } catch (e) {
+        showResponse('resStats', e.message, 0);
+        log(`/stats FAILED: ${e.message}`, 'err');
+      }
+    }
+
+    async function testAsk() {
+      const url = repo();
+      const q = $('query').value.trim();
+      if (!url || !q) { log('Repo URL or query is empty', 'err'); return; }
+      log(`Asking: "${q}"`, 'info');
+      const el = $('resAsk');
+      el.textContent = '';
+      el.classList.add('stream-cursor');
+
+      try {
+        const r = await fetch(`${base()}/api/ask`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repoUrl: url, query: q }),
+          signal: AbortSignal.timeout(60000)
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let full = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          full += chunk;
+          el.textContent = full;
+          el.scrollTop = el.scrollHeight;
+        }
+        el.classList.remove('stream-cursor');
+        log('Answer received', 'ok');
+      } catch (e) {
+        el.classList.remove('stream-cursor');
+        el.textContent = `ERROR: ${e.message}`;
+        log(`/ask FAILED: ${e.message}`, 'err');
+      }
+    }
+  </script>
+</body>
+</html>
