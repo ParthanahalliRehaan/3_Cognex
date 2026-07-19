@@ -3,95 +3,200 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Cognex — Ask anything about any GitHub repository. Explore code structure, dependencies, and architecture through an interactive graph and AI chat.">
+  <meta name="theme-color" content="#c8ff00">
+  <meta property="og:title" content="Cognex — GitHub Repo Explorer">
+  <meta property="og:description" content="Ask anything about any GitHub repository. AI-powered code exploration.">
+  <meta property="og:type" content="website">
   <title>Cognex</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=VT323&family=Syne+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+<base target="_blank">
 </head>
 <body>
+  <noscript>
+    <div class="noscript-banner">
+      <p>JavaScript is required to use Cognex. Please enable JavaScript in your browser settings.</p>
+    </div>
+  </noscript>
+
   <div class="app">
-    <header>
+    <header role="banner">
       <div class="logo">
         <h1>COGNEX</h1>
       </div>
       <p class="tagline">Ask anything about any GitHub repository</p>
     </header>
 
-    <section class="repo-bar">
+    <section class="repo-bar" aria-label="Repository input">
       <div class="input-row">
-        <input type="text" id="repoUrl" placeholder="https://github.com/vercel/next.js" autocomplete="off">
-        <button id="ingestBtn">
-          <span class="btn-icon">🗲</span>
-          <span class="btn-text">BUILD GRAPH</span>
+        <label for="repoUrl" class="visually-hidden">GitHub repository URL</label>
+        <input type="text" id="repoUrl" placeholder="https://github.com/vercel/next.js" autocomplete="off" aria-describedby="repo-hints">
+        <button type="button" id="ingestBtn">
+          <span class="btn-icon" aria-hidden="true">💥</span>
+          <span class="btn-text">Build graph</span>
         </button>
       </div>
-      <div class="hints">
+      <div class="hints" id="repo-hints">
         <span>Try:</span>
-        <button class="hint-btn" data-repo="https://github.com/vercel/next.js">next.js</button>
-        <button class="hint-btn" data-repo="https://github.com/facebook/react">react</button>
-        <button class="hint-btn" data-repo="https://github.com/torvalds/linux">linux</button>
+        <button type="button" class="hint-btn" data-repo="https://github.com/vercel/next.js">next.js</button>
+        <button type="button" class="hint-btn" data-repo="https://github.com/facebook/react">react</button>
+        <button type="button" class="hint-btn" data-repo="https://github.com/torvalds/linux">linux</button>
       </div>
-      <div id="ingestStatus" class="status hidden"></div>
+      <div id="ingestStatus" class="status hidden" role="status" aria-live="polite" aria-atomic="true"></div>
     </section>
 
-    <main class="dashboard">
-      <div class="chat-panel">
-        <div class="panel-header">
-          <span class="panel-dot"></span>
-          <h2>CHAT</h2>
-        </div>
-        <div id="chatMessages" class="chat-messages">
-          <div class="welcome">
-            <div class="welcome-ascii">[>_]</div>
-            <p>Enter a GitHub repo URL above, then ask me anything about it.</p>
-            <div class="suggestions">
-              <button class="suggestion" data-q="Who are the top contributors?">top contributors?</button>
-              <button class="suggestion" data-q="What are the main dependencies?">dependencies?</button>
-              <button class="suggestion" data-q="Explain the architecture">architecture?</button>
-            </div>
-          </div>
-        </div>
-        <div class="chat-input-row">
-          <input type="text" id="chatInput" placeholder="Ask about this repo..." disabled autocomplete="off">
-          <button id="sendBtn" disabled>➜</button>
-        </div>
-      </div>
+    <nav class="tab-bar" aria-label="Main navigation" id="tabBar">
+      <button type="button" class="tab-btn active" data-tab="graph" aria-selected="true" role="tab">
+        <span aria-hidden="true">🕸</span> Graph
+      </button>
+      <button type="button" class="tab-btn" data-tab="files" aria-selected="false" role="tab">
+        <span aria-hidden="true">📂</span> Files
+      </button>
+      <button type="button" class="tab-btn" data-tab="chat" aria-selected="false" role="tab">
+        <span aria-hidden="true">👾</span> Ask AI
+      </button>
+    </nav>
 
-      <div class="side-panels">
-        <div class="graph-panel">
-          <div class="panel-header">
-            <span class="panel-dot"></span>
-            <h2>GRAPH</h2>
-          </div>
-          <div id="graphViz" class="graph-viz">
-            <div class="empty-state">
-              <div class="empty-ascii">┌─┐<br>│ │<br>└─┘</div>
-              <p>Build a graph first</p>
-            </div>
-          </div>
-        </div>
+    <main class="content-area" id="contentArea">
 
-        <div class="files-panel">
+      <!-- Graph Tab -->
+      <section id="graphTab" class="tab-content active" role="tabpanel" aria-label="Repository graph visualization">
+        <div class="panel">
           <div class="panel-header">
-            <span class="panel-dot"></span>
-            <h2>FILES</h2>
+            <div class="panel-header-left">
+              <span class="panel-dot" aria-hidden="true"></span>
+              <h2>Graph</h2>
+            </div>
+            <div class="panel-header-right graph-controls">
+              <div class="graph-search-wrap">
+                <label for="graphSearch" class="visually-hidden">Search nodes</label>
+                <input type="text" id="graphSearch" placeholder="Find node…" autocomplete="off">
+              </div>
+              <button type="button" class="graph-btn" id="orphanToggle" aria-pressed="false" title="Toggle unconnected nodes">
+                <span aria-hidden="true">◉</span>
+                <span class="graph-btn-label" id="orphanCount">0</span>
+              </button>
+              <button type="button" class="graph-btn" id="focusResetBtn" title="Reset view" aria-label="Reset view">
+                <span aria-hidden="true">⟲</span>
+              </button>
+            </div>
           </div>
-          <div id="filesList" class="files-list">
+          <div id="graphViz" class="graph-viz" role="img" aria-label="Interactive repository graph. Load a repository to visualize.">
             <div class="empty-state">
-              <div class="empty-ascii">📂</div>
-              <p>No files yet</p>
+              <div class="empty-ascii" aria-hidden="true">┌─┐<br>│ │<br>└─┘</div>
+              <p>Enter a repository URL above to build a graph</p>
+            </div>
+          </div>
+          <div id="graphStats" class="graph-stats hidden" aria-label="Graph statistics">
+            <span><strong id="statNodes">0</strong> nodes</span>
+            <span><strong id="statEdges">0</strong> edges</span>
+            <span><strong id="statComponents">0</strong> islands</span>
+          </div>
+          <div id="orphanBadge" class="orphan-badge hidden" role="status" aria-live="polite">
+            <span id="orphanBadgeCount">0</span> unconnected hidden
+          </div>
+        </div>
+      </section>
+
+      <!-- Files Tab -->
+      <section id="filesTab" class="tab-content" role="tabpanel" aria-label="File explorer">
+        <div class="panel files-panel">
+          <div class="files-sidebar">
+            <div class="panel-header">
+              <div class="panel-header-left">
+                <span class="panel-dot" aria-hidden="true"></span>
+                <h2>Explorer</h2>
+                <span class="file-count-badge" id="fileCountBadge">0</span>
+              </div>
+              <div class="panel-header-right file-controls">
+                <div class="file-search-wrap">
+                  <label for="fileSearch" class="visually-hidden">Filter files</label>
+                  <input type="text" id="fileSearch" placeholder="Filter…" autocomplete="off">
+                </div>
+                <button type="button" class="graph-btn" id="expandAllBtn" title="Expand all folders" aria-label="Expand all folders">▼</button>
+                <button type="button" class="graph-btn" id="collapseAllBtn" title="Collapse all folders" aria-label="Collapse all folders">▶</button>
+              </div>
+            </div>
+            <div id="filesTree" class="files-tree" role="tree" aria-label="Repository file tree">
+              <div class="empty-state">
+                <div class="empty-ascii" aria-hidden="true">📂</div>
+                <p>No files yet</p>
+              </div>
+            </div>
+          </div>
+          <div class="files-editor">
+            <div class="editor-tabs" id="editorTabs" role="tablist" aria-label="Open files"></div>
+            <div class="editor-content" id="editorContent" role="tabpanel">
+              <div class="editor-empty">
+                <div class="empty-ascii" aria-hidden="true">📂</div>
+                <p>Select a file from the tree to view</p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </section>
+
+      <!-- Chat Tab -->
+      <section id="chatTab" class="tab-content" role="tabpanel" aria-label="AI chat assistant">
+        <div class="panel chat-panel">
+          <div class="panel-header">
+            <div class="panel-header-left">
+              <span class="panel-dot" aria-hidden="true"></span>
+              <h2>Chat</h2>
+            </div>
+            <div class="panel-header-right">
+              <button type="button" class="graph-btn" id="clearChatBtn" title="Clear conversation" aria-label="Clear conversation">
+                <span aria-hidden="true">🗑</span>
+              </button>
+            </div>
+          </div>
+          <div id="chatMessages" class="chat-messages" role="log" aria-live="polite" aria-atomic="false" aria-relevant="additions">
+            <div class="welcome">
+              <div class="welcome-ascii" aria-hidden="true">[>_]</div>
+              <p>Ask me anything about this repository.</p>
+              <div class="suggestions" role="list" aria-label="Suggested questions">
+                <button type="button" class="suggestion" data-q="Who are the top contributors?" role="listitem">👤 Top contributors?</button>
+                <button type="button" class="suggestion" data-q="What are the main dependencies?" role="listitem">📦 Dependencies?</button>
+                <button type="button" class="suggestion" data-q="Explain the architecture" role="listitem">🏗 Architecture?</button>
+                <button type="button" class="suggestion" data-q="Find security vulnerabilities" role="listitem">🔒 Security issues?</button>
+                <button type="button" class="suggestion" data-q="Summarize the README" role="listitem">📝 Summarize README?</button>
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-row">
+            <label for="chatInput" class="visually-hidden">Ask a question about the repository</label>
+            <textarea id="chatInput" placeholder="Ask about this repo…" disabled autocomplete="off" aria-describedby="chat-hint" rows="1"></textarea>
+            <span id="chat-hint" class="visually-hidden">Chat is disabled until a repository is loaded. Press Enter to send, Shift+Enter for a new line.</span>
+            <button type="button" id="sendBtn" disabled aria-label="Send message">➜</button>
+          </div>
+        </div>
+      </section>
+
     </main>
 
-    <footer>
+    <footer role="contentinfo">
       <p>Powered by Groq · Cohere · Supabase · Cloudflare</p>
     </footer>
   </div>
 
-  <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
-  <script src="app.js"></script>
+  <div id="nodeModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Node Details</h3>
+        <button type="button" class="modal-close" id="modalCloseBtn" aria-label="Close modal">×</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <div id="graphTooltip" class="graph-tooltip" role="tooltip" aria-hidden="true"></div>
+
+  <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"
+          integrity="sha384-+4PsOx8pfCvP2QccNj+4PHhCkQFmbi69UlEi43BHbHopL1unxFMpqiPXNscfoiM5"
+          crossorigin="anonymous"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
