@@ -10,6 +10,7 @@
  *   • Graceful error responses with request IDs
  *   • Health check endpoint with dependency status
  *   • Rate limiting via Cloudflare's built-in
+ *   • FULL CRUD: Create, Read, Update, Delete for nodes, edges, and documents
  */
 
 import { Hono } from 'hono';
@@ -35,7 +36,7 @@ const app = new Hono({ strict: false });
 // CORS — allow all origins (restrict in production)
 app.use('*', cors({
   origin: '*',
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
   exposeHeaders: ['X-Request-ID', 'X-Ingestion-Status'],
   maxAge: 86400,
@@ -61,6 +62,10 @@ function validateQuery(query) {
   return query && typeof query === 'string' && query.trim().length > 0 && query.length < 2000;
 }
 
+function validateUUID(id) {
+  return id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // Health check
@@ -68,7 +73,7 @@ app.get('/health', async (c) => {
   const health = {
     status: 'ok',
     service: 'cognex-worker',
-    version: '1.1.0',
+    version: '1.2.0',
     timestamp: new Date().toISOString(),
     env: {
       hasSupabaseUrl: !!c.env.SUPABASE_URL,
@@ -83,8 +88,362 @@ app.get('/health', async (c) => {
 
 app.get('/', (c) => c.redirect('/health'));
 
-// ─── POST /api/ingest ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CRUD — GRAPH NODES  (Create, Read, Update, Delete)
+// ═══════════════════════════════════════════════════════════════════════════════
 
+// CREATE — POST /api/nodes
+app.post('/api/nodes', async (c) => {
+  const reqId = c.get('requestId');
+  try {
+    const body = await c.req.json();
+    const { repo_url, node_type, label, metadata = {} } = body;
+
+    if (!validateRepoUrl(repo_url)) return c.json({ error: 'Invalid repo_url' }, 400);
+    if (!node_type || typeof node_type !== 'string') return c.json({ error: 'node_type required' }, 400);
+    if (!label || typeof label !== 'string') return c.json({ error: 'label required' }, 400);
+
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const node = await supabase.storeGraphNode(client, { repo_url, node_type, label, metadata });
+
+    return c.json({ success: true, data: node, requestId: reqId }, 201);
+  } catch (err) {
+    console.error(`[${reqId}] CREATE NODE ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// READ — GET /api/nodes (list by repo)
+app.get('/api/nodes', async (c) => {
+  const reqId = c.get('requestId');
+  const repoUrl = c.req.query('repoUrl')?.trim();
+  const nodeType = c.req.query('nodeType')?.trim() || null;
+
+  if (!repoUrl) return c.json({ error: 'repoUrl query param required' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const nodes = await supabase.getGraphNodes(client, repoUrl, nodeType);
+
+    return c.json({ success: true, count: nodes.length, data: nodes, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] LIST NODES ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// READ — GET /api/nodes/:id
+app.get('/api/nodes/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('graph_nodes').select('*').eq('id', id).single();
+    if (error || !data) return c.json({ error: 'Node not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] GET NODE ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// UPDATE — PUT /api/nodes/:id
+app.put('/api/nodes/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const body = await c.req.json();
+    const updates = {};
+    if (body.label !== undefined) updates.label = body.label;
+    if (body.node_type !== undefined) updates.node_type = body.node_type;
+    if (body.metadata !== undefined) updates.metadata = body.metadata;
+
+    if (Object.keys(updates).length === 0) {
+      return c.json({ error: 'No fields to update. Provide label, node_type, or metadata.' }, 400);
+    }
+
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('graph_nodes').update(updates).eq('id', id).select().single();
+
+    if (error) throw new Error(error.message);
+    if (!data) return c.json({ error: 'Node not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] UPDATE NODE ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// DELETE — DELETE /api/nodes/:id
+app.delete('/api/nodes/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('graph_nodes').delete().eq('id', id).select().single();
+
+    if (error) throw new Error(error.message);
+    if (!data) return c.json({ error: 'Node not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, message: 'Node deleted', data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] DELETE NODE ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CRUD — GRAPH EDGES  (Create, Read, Update, Delete)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// CREATE — POST /api/edges
+app.post('/api/edges', async (c) => {
+  const reqId = c.get('requestId');
+  try {
+    const body = await c.req.json();
+    const { repo_url, source_node_id, target_node_id, relation, metadata = {} } = body;
+
+    if (!validateRepoUrl(repo_url)) return c.json({ error: 'Invalid repo_url' }, 400);
+    if (!validateUUID(source_node_id)) return c.json({ error: 'Invalid source_node_id' }, 400);
+    if (!validateUUID(target_node_id)) return c.json({ error: 'Invalid target_node_id' }, 400);
+    if (!relation || typeof relation !== 'string') return c.json({ error: 'relation required' }, 400);
+
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const edge = await supabase.storeGraphEdge(client, { repo_url, source_node_id, target_node_id, relation, metadata });
+
+    return c.json({ success: true, data: edge, requestId: reqId }, 201);
+  } catch (err) {
+    console.error(`[${reqId}] CREATE EDGE ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// READ — GET /api/edges (list by repo)
+app.get('/api/edges', async (c) => {
+  const reqId = c.get('requestId');
+  const repoUrl = c.req.query('repoUrl')?.trim();
+  const relation = c.req.query('relation')?.trim() || null;
+
+  if (!repoUrl) return c.json({ error: 'repoUrl query param required' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const edges = await supabase.getGraphEdges(client, repoUrl, relation);
+
+    return c.json({ success: true, count: edges.length, data: edges, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] LIST EDGES ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// READ — GET /api/edges/:id
+app.get('/api/edges/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('graph_edges').select('*').eq('id', id).single();
+    if (error || !data) return c.json({ error: 'Edge not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] GET EDGE ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// UPDATE — PUT /api/edges/:id
+app.put('/api/edges/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const body = await c.req.json();
+    const updates = {};
+    if (body.relation !== undefined) updates.relation = body.relation;
+    if (body.metadata !== undefined) updates.metadata = body.metadata;
+
+    if (Object.keys(updates).length === 0) {
+      return c.json({ error: 'No fields to update. Provide relation or metadata.' }, 400);
+    }
+
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('graph_edges').update(updates).eq('id', id).select().single();
+
+    if (error) throw new Error(error.message);
+    if (!data) return c.json({ error: 'Edge not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] UPDATE EDGE ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// DELETE — DELETE /api/edges/:id
+app.delete('/api/edges/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('graph_edges').delete().eq('id', id).select().single();
+
+    if (error) throw new Error(error.message);
+    if (!data) return c.json({ error: 'Edge not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, message: 'Edge deleted', data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] DELETE EDGE ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CRUD — DOCUMENTS  (Create, Read, Update, Delete)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// CREATE — POST /api/documents
+app.post('/api/documents', async (c) => {
+  const reqId = c.get('requestId');
+  try {
+    const body = await c.req.json();
+    const { repo_url, content, metadata = {}, embedding } = body;
+
+    if (!validateRepoUrl(repo_url)) return c.json({ error: 'Invalid repo_url' }, 400);
+    if (!content || typeof content !== 'string') return c.json({ error: 'content required' }, 400);
+    if (!embedding || !Array.isArray(embedding)) return c.json({ error: 'embedding array required' }, 400);
+
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const doc = await supabase.storeDocument(client, { repo_url, content, metadata, embedding });
+
+    return c.json({ success: true, data: doc, requestId: reqId }, 201);
+  } catch (err) {
+    console.error(`[${reqId}] CREATE DOCUMENT ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// READ — GET /api/documents (list by repo)
+app.get('/api/documents', async (c) => {
+  const reqId = c.get('requestId');
+  const repoUrl = c.req.query('repoUrl')?.trim();
+
+  if (!repoUrl) return c.json({ error: 'repoUrl query param required' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('documents').select('*').eq('repo_url', repoUrl);
+    if (error) throw new Error(error.message);
+
+    return c.json({ success: true, count: data.length, data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] LIST DOCUMENTS ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// READ — GET /api/documents/:id
+app.get('/api/documents/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('documents').select('*').eq('id', id).single();
+    if (error || !data) return c.json({ error: 'Document not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] GET DOCUMENT ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// UPDATE — PUT /api/documents/:id
+app.put('/api/documents/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const body = await c.req.json();
+    const updates = {};
+    if (body.content !== undefined) updates.content = body.content;
+    if (body.metadata !== undefined) updates.metadata = body.metadata;
+    if (body.embedding !== undefined) updates.embedding = body.embedding;
+
+    if (Object.keys(updates).length === 0) {
+      return c.json({ error: 'No fields to update. Provide content, metadata, or embedding.' }, 400);
+    }
+
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('documents').update(updates).eq('id', id).select().single();
+
+    if (error) throw new Error(error.message);
+    if (!data) return c.json({ error: 'Document not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] UPDATE DOCUMENT ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// DELETE — DELETE /api/documents/:id
+app.delete('/api/documents/:id', async (c) => {
+  const reqId = c.get('requestId');
+  const id = c.req.param('id');
+  if (!validateUUID(id)) return c.json({ error: 'Invalid UUID' }, 400);
+
+  try {
+    const supabase = await getSupabase();
+    const client = supabase.getSupabaseClient(c.env, true);
+    const { data, error } = await client.from('documents').delete().eq('id', id).select().single();
+
+    if (error) throw new Error(error.message);
+    if (!data) return c.json({ error: 'Document not found', requestId: reqId }, 404);
+
+    return c.json({ success: true, message: 'Document deleted', data, requestId: reqId });
+  } catch (err) {
+    console.error(`[${reqId}] DELETE DOCUMENT ERROR:`, err);
+    return c.json({ error: err.message, requestId: reqId }, 500);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  EXISTING APPLICATION ROUTES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── POST /api/ingest ─────────────────────────────────────────────────────────
 app.post('/api/ingest', async (c) => {
   const reqId = c.get('requestId');
 
@@ -97,12 +456,8 @@ app.post('/api/ingest', async (c) => {
     }
 
     const rag = await getRag();
-
-    // CRITICAL: Use ctx.waitUntil for background processing
-    // This returns immediately to the client, avoiding CPU time limits
     const result = await rag.ingestRepo(repoUrl, c.env, c.executionCtx);
 
-    // If background mode, return 202 Accepted
     if (result.status === 'accepted') {
       return c.json({
         success: true,
@@ -114,7 +469,6 @@ app.post('/api/ingest', async (c) => {
       }, 202);
     }
 
-    // Synchronous completion (small repos only)
     return c.json({
       success: result.status === 'success',
       status: result.status,
@@ -125,15 +479,11 @@ app.post('/api/ingest', async (c) => {
 
   } catch (err) {
     console.error(`[${reqId}] INGEST ERROR:`, err);
-    return c.json({
-      error: err.message || 'Ingestion failed',
-      requestId: reqId,
-    }, 500);
+    return c.json({ error: err.message || 'Ingestion failed', requestId: reqId }, 500);
   }
 });
 
 // ─── POST /api/ask ────────────────────────────────────────────────────────────
-
 app.post('/api/ask', async (c) => {
   const reqId = c.get('requestId');
 
@@ -141,17 +491,12 @@ app.post('/api/ask', async (c) => {
     const body = await c.req.json();
     const { repoUrl, query } = body;
 
-    if (!validateRepoUrl(repoUrl)) {
-      return c.json({ error: 'Invalid repoUrl' }, 400);
-    }
-    if (!validateQuery(query)) {
-      return c.json({ error: 'Query must be 1-2000 characters' }, 400);
-    }
+    if (!validateRepoUrl(repoUrl)) return c.json({ error: 'Invalid repoUrl' }, 400);
+    if (!validateQuery(query)) return c.json({ error: 'Query must be 1-2000 characters' }, 400);
 
     const rag = await getRag();
     const response = await rag.handleQuery(repoUrl, query.trim(), c.env);
 
-    // Copy streaming response with CORS headers already applied by middleware
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -164,15 +509,11 @@ app.post('/api/ask', async (c) => {
 
   } catch (err) {
     console.error(`[${reqId}] ASK ERROR:`, err);
-    return c.json({
-      error: err.message || 'Query failed',
-      requestId: reqId,
-    }, 500);
+    return c.json({ error: err.message || 'Query failed', requestId: reqId }, 500);
   }
 });
 
 // ─── GET /api/graph ───────────────────────────────────────────────────────────
-
 app.get('/api/graph', async (c) => {
   const reqId = c.get('requestId');
   const repoUrl = c.req.query('repoUrl')?.trim();
@@ -202,23 +543,17 @@ app.get('/api/graph', async (c) => {
 });
 
 // ─── GET /api/status ──────────────────────────────────────────────────────────
-
 app.get('/api/status', async (c) => {
   const reqId = c.get('requestId');
   const repoUrl = c.req.query('repoUrl')?.trim();
 
-  if (!repoUrl) {
-    return c.json({ error: 'repoUrl query param is required' }, 400);
-  }
+  if (!repoUrl) return c.json({ error: 'repoUrl query param is required' }, 400);
 
   try {
     const supabase = await getSupabase();
     const client = supabase.getSupabaseClient(c.env, true);
-
-    // Check database status
     const dbStatus = await supabase.getIngestionStatus(client, repoUrl);
 
-    // Check in-memory progress (for background ingestion)
     const rag = await getRag();
     const progress = rag.getIngestionProgress(repoUrl);
 
@@ -244,21 +579,17 @@ app.get('/api/status', async (c) => {
 });
 
 // ─── GET /api/stats ───────────────────────────────────────────────────────────
-
 app.get('/api/stats', async (c) => {
   const reqId = c.get('requestId');
   const repoUrl = c.req.query('repoUrl')?.trim();
 
-  if (!repoUrl) {
-    return c.json({ error: 'repoUrl query param is required' }, 400);
-  }
+  if (!repoUrl) return c.json({ error: 'repoUrl query param is required' }, 400);
 
   try {
     const supabase = await getSupabase();
     const client = supabase.getSupabaseClient(c.env, true);
     const graph = await supabase.getGraphForRepo(client, repoUrl);
 
-    // Compute stats
     const stats = {
       totalNodes: graph.nodes.length,
       totalEdges: graph.edges.length,
@@ -301,13 +632,11 @@ app.get('/api/stats', async (c) => {
 });
 
 // ─── 404 Handler ────────────────────────────────────────────────────────────────
-
 app.notFound((c) => {
   return c.json({ error: 'Not found', path: c.req.path }, 404);
 });
 
 // ─── Error Handler ────────────────────────────────────────────────────────────
-
 app.onError((err, c) => {
   const reqId = c.get('requestId') || 'unknown';
   console.error(`[${reqId}] UNHANDLED ERROR:`, err);
@@ -319,7 +648,5 @@ app.onError((err, c) => {
 });
 
 // ─── Export ───────────────────────────────────────────────────────────────────
-
 export default app;
-// For Cloudflare Workers compatibility
 export const fetch = app.fetch;

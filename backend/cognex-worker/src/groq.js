@@ -15,11 +15,14 @@ import { streamText, generateText } from 'ai';
 
 // ─── Configuration ────────────────────────────────────────────────────────────────
 
+// Confirmed live via `curl https://api.groq.com/openai/v1/models` against
+// this account on 2026-08-28 — do NOT trust this list blindly forever,
+// that's the whole lesson from today. Re-run that curl if this breaks again
+// instead of guessing.
 const MODEL_CHAIN = [
-  'llama-3.3-70b-versatile',
-  'llama-3.1-70b-versatile',
-  'llama-3.1-8b-instant',
-  'mixtral-8x7b-32768',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'groq/compound-mini',
 ];
 
 const DEFAULT_TEMPERATURE = 0.2;  // Lower = more factual
@@ -59,6 +62,14 @@ export async function streamAnswer(userPrompt, systemPrompt, apiKey, options = {
       temperature: options.temperature ?? DEFAULT_TEMPERATURE,
       maxTokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
       abortSignal: controller.signal,
+      // streamText() returns before the model has actually responded — errors
+      // that happen while the stream is being consumed happen OUTSIDE this
+      // try/catch's scope and were previously surfacing only as bare
+      // Cloudflare uncaught-exception traces with no status or message.
+      // This is the actual fix for "no visibility into why Groq failed."
+      onError: ({ error }) => {
+        console.error(`[GROQ STREAM ERROR] model=${model} status=${error?.status ?? error?.statusCode ?? 'n/a'} name=${error?.name} message=${error?.message ?? error}`);
+      },
     });
 
     clearTimeout(timeoutId);
@@ -120,6 +131,9 @@ export async function streamChat(messages, systemPrompt, apiKey, options = {}) {
       temperature: options.temperature ?? DEFAULT_TEMPERATURE,
       maxTokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
       abortSignal: controller.signal,
+      onError: ({ error }) => {
+        console.error(`[GROQ STREAM ERROR] model=${model} status=${error?.status ?? error?.statusCode ?? 'n/a'} name=${error?.name} message=${error?.message ?? error}`);
+      },
     });
 
     clearTimeout(timeoutId);
@@ -155,19 +169,21 @@ export async function generateAnswer(userPrompt, systemPrompt, apiKey, options =
 
     } catch (err) {
       lastError = err;
-      console.warn(`[GROQ] Model ${model} failed: ${err.message}`);
+      const status = err.status ?? err.statusCode;
+      console.warn(`[GROQ] Model ${model} failed: status=${status} message=${err.message}`);
 
-      // Retry same model on transient errors
-      if (err.message?.includes('fetch') || err.status >= 500) {
+      // Retry same model only on transient errors (network blip, 5xx, rate limit)
+      if (err.message?.includes('fetch') || status >= 500 || status === 429) {
         await sleep(BASE_DELAY_MS + jitter(500));
         modelIdx--; // Retry same model
         continue;
       }
 
-      // Try next model in chain
-      if (modelIdx < MODEL_CHAIN.length - 1) {
-        await sleep(BASE_DELAY_MS + jitter(500));
-      }
+      // 400/401/404 etc are permanent for this model (bad/decommissioned
+      // model, bad auth, bad request) — retrying won't help, move to the
+      // next model in the chain immediately instead of sleeping.
+      // No backoff sleep here: sleeping before a *guaranteed* next failure
+      // just adds latency for no benefit.
     }
   }
 
