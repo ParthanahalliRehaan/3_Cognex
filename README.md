@@ -1,7 +1,7 @@
 # 🧠 Cognex — Knowledge Graph & Doubt Resolution Engine
 
-> **Deployed App:** [https://cognex-5ij.pages.dev/](https://cognex-5ij.pages.dev/)  
-> **Repository:** [https://github.com/ParthanahalliRehaan/3_Cognex](https://github.com/ParthanahalliRehaan/3_Cognex)  
+> **Deployed App:** [https://fa410d0a.cognex-5ij.pages.dev/](https://fa410d0a.cognex-5ij.pages.dev/)  
+> **Repository Link for Source Code:** [https://github.com/ParthanahalliRehaan/3_Cognex](https://github.com/ParthanahalliRehaan/3_Cognex)  
 > **License:** MIT  
 > **Version:** 1.2.0
 
@@ -15,7 +15,7 @@ Developers and students spend hours trying to understand unfamiliar GitHub repos
 
 ## 🏗️ System Architecture
 
-![Cognex Cloud Architecture](cognex-architecture-diagram.png)
+![Cognex Cloud Architecture](./cognex-architecture-diagram.png)
 
 ### Architecture Layers
 
@@ -440,4 +440,4 @@ GitHub: [@ParthanahalliRehaan](https://github.com/ParthanahalliRehaan)
 
 ---
 
-*Built with ❤️ using Cloudflare, Supabase, and open-source AI.*
+*Built with passion using Cloudflare, Supabase, and open-source AI.*
