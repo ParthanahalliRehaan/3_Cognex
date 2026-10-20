@@ -13,46 +13,55 @@ Developers and students spend hours trying to understand unfamiliar GitHub repos
 
 ---
 
+
+
 ## 🏗️ System Architecture
 
 ![Cognex Cloud Architecture](./cognex-architecture-diagram.png)
 
 ### Architecture Layers
 
-| Layer | Technology | Cloud Service | Purpose |
-|-------|-----------|---------------|---------|
-| **Client** | HTML5 / CSS3 / JavaScript | Browser / Mobile | User interface |
-| **Frontend** | Static site + Cytoscape.js | **Cloudflare Pages** | Graph visualization, chat UI |
-| **Backend** | Hono (Node.js) | **Cloudflare Workers** | RESTful API, RAG orchestration |
-| **Database** | PostgreSQL + pgvector | **Supabase** | Graph storage, vector search |
-| **Embeddings** | Cohere `embed-english-v3.0` | **Cohere API** | 1024-D text embeddings |
-| **LLM** | Llama 3.3 70B | **Groq API** | Streaming answer generation |
-| **Search** | Google Search | **Serper.dev** | Web fallback for missing context |
-| **Data Source** | GitHub REST API | **GitHub** | Repository metadata, code, issues |
+
+| Layer           | Technology                  | Cloud Service          | Purpose                           |
+| --------------- | --------------------------- | ---------------------- | --------------------------------- |
+| **Client**      | HTML5 / CSS3 / JavaScript   | Browser / Mobile       | User interface                    |
+| **Frontend**    | Static site + Cytoscape.js  | **Cloudflare Pages**   | Graph visualization, chat UI      |
+| **Backend**     | Hono (Node.js)              | **Cloudflare Workers** | RESTful API, RAG orchestration    |
+| **Database**    | PostgreSQL + pgvector       | **Supabase**           | Graph storage, vector search      |
+| **Embeddings**  | Cohere `embed-english-v3.0` | **Cohere API**         | 1024-D text embeddings            |
+| **LLM**         | Llama 3.3 70B               | **Groq API**           | Streaming answer generation       |
+| **Search**      | Google Search               | **Serper.dev**         | Web fallback for missing context  |
+| **Data Source** | GitHub REST API             | **GitHub**             | Repository metadata, code, issues |
+
+
+
 
 ### Data Flow
 
 1. **Ingestion Flow:**
-   ```
+  ```
    User → POST /api/ingest → GitHub API (fetch repo data)
                         → Graph Builder (nodes + edges)
                         → Embedding Pipeline (Cohere API)
                         → Supabase (store graph + vectors)
-   ```
-
+  ```
 2. **Query Flow:**
-   ```
+  ```
    User → POST /api/ask → Embed query (Cohere)
                      → Vector search (pgvector)
                      → Graph retrieval (Supabase)
                      → [Optional] Web search (Serper)
                      → LLM prompt assembly (Groq)
                      → Streaming response
-   ```
+  ```
 
 ---
 
+
+
 ## 🗄️ Database Design
+
+
 
 ### Schema Overview
 
@@ -60,49 +69,64 @@ The database runs on **Supabase PostgreSQL** with the `pgvector` extension enabl
 
 ### Tables
 
+
+
 #### `documents` — Vector Search Store
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Unique document ID |
-| `repo_url` | `TEXT` | `NOT NULL` | Source repository URL |
-| `content` | `TEXT` | `NOT NULL` | Raw text chunk (code, README, issue) |
-| `metadata` | `JSONB` | `DEFAULT '{}'` | Source type, path, chunk index |
-| `embedding` | `VECTOR(1024)` | — | 1024-D embedding from Cohere |
+
+| Column      | Type           | Constraints                             | Description                          |
+| ----------- | -------------- | --------------------------------------- | ------------------------------------ |
+| `id`        | `UUID`         | `PRIMARY KEY DEFAULT gen_random_uuid()` | Unique document ID                   |
+| `repo_url`  | `TEXT`         | `NOT NULL`                              | Source repository URL                |
+| `content`   | `TEXT`         | `NOT NULL`                              | Raw text chunk (code, README, issue) |
+| `metadata`  | `JSONB`        | `DEFAULT '{}'`                          | Source type, path, chunk index       |
+| `embedding` | `VECTOR(1024)` | —                                       | 1024-D embedding from Cohere         |
+
 
 **Indexes:**
+
 - `idx_documents_repo` — B-tree on `repo_url`
 - `idx_documents_metadata` — GIN on `metadata`
 - `idx_documents_embedding_hnsw` — HNSW index for fast cosine similarity
 
+
+
 #### `graph_nodes` — Knowledge Graph Entities
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Unique node ID |
-| `repo_url` | `TEXT` | `NOT NULL` | Source repository URL |
-| `node_type` | `TEXT` | `NOT NULL` | `file`, `function`, `contributor`, `issue`, `pr`, `commit`, `dependency`, `repo`, `readme` |
-| `label` | `TEXT` | `NOT NULL` | Human-readable name |
-| `metadata` | `JSONB` | `DEFAULT '{}'` | Extended properties |
+
+| Column      | Type    | Constraints                             | Description                                                                                |
+| ----------- | ------- | --------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `id`        | `UUID`  | `PRIMARY KEY DEFAULT gen_random_uuid()` | Unique node ID                                                                             |
+| `repo_url`  | `TEXT`  | `NOT NULL`                              | Source repository URL                                                                      |
+| `node_type` | `TEXT`  | `NOT NULL`                              | `file`, `function`, `contributor`, `issue`, `pr`, `commit`, `dependency`, `repo`, `readme` |
+| `label`     | `TEXT`  | `NOT NULL`                              | Human-readable name                                                                        |
+| `metadata`  | `JSONB` | `DEFAULT '{}'`                          | Extended properties                                                                        |
+
 
 **Indexes:**
+
 - `idx_graph_nodes_repo` — B-tree on `repo_url`
 - `idx_graph_nodes_type` — B-tree on `node_type`
 - `idx_graph_nodes_label` — B-tree on `label`
 - `idx_graph_nodes_repo_type` — Composite on `(repo_url, node_type)`
 
+
+
 #### `graph_edges` — Knowledge Graph Relationships
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | `UUID` | `PRIMARY KEY DEFAULT gen_random_uuid()` | Unique edge ID |
-| `repo_url` | `TEXT` | `NOT NULL` | Source repository URL |
-| `source_node_id` | `UUID` | `REFERENCES graph_nodes(id) ON DELETE CASCADE` | Origin node |
-| `target_node_id` | `UUID` | `REFERENCES graph_nodes(id) ON DELETE CASCADE` | Target node |
-| `relation` | `TEXT` | `NOT NULL` | `CONTAINS`, `AUTHORED`, `MODIFIES`, `REFERENCES`, `FIXES`, `DEPENDS_ON`, `IMPORTS`, `OPENED` |
-| `metadata` | `JSONB` | `DEFAULT '{}'` | Extended properties |
+
+| Column           | Type    | Constraints                                    | Description                                                                                  |
+| ---------------- | ------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `id`             | `UUID`  | `PRIMARY KEY DEFAULT gen_random_uuid()`        | Unique edge ID                                                                               |
+| `repo_url`       | `TEXT`  | `NOT NULL`                                     | Source repository URL                                                                        |
+| `source_node_id` | `UUID`  | `REFERENCES graph_nodes(id) ON DELETE CASCADE` | Origin node                                                                                  |
+| `target_node_id` | `UUID`  | `REFERENCES graph_nodes(id) ON DELETE CASCADE` | Target node                                                                                  |
+| `relation`       | `TEXT`  | `NOT NULL`                                     | `CONTAINS`, `AUTHORED`, `MODIFIES`, `REFERENCES`, `FIXES`, `DEPENDS_ON`, `IMPORTS`, `OPENED` |
+| `metadata`       | `JSONB` | `DEFAULT '{}'`                                 | Extended properties                                                                          |
+
 
 **Indexes:**
+
 - `idx_graph_edges_repo` — B-tree on `repo_url`
 - `idx_graph_edges_source` — B-tree on `source_node_id`
 - `idx_graph_edges_target` — B-tree on `target_node_id`
@@ -110,7 +134,11 @@ The database runs on **Supabase PostgreSQL** with the `pgvector` extension enabl
 - `idx_graph_edges_repo_relation` — Composite on `(repo_url, relation)`
 - `idx_graph_edges_metadata` — GIN on `metadata`
 
+
+
 ### RPC Functions
+
+
 
 #### `match_documents(query_embedding, match_threshold, match_count, filter_repo_url)`
 
@@ -138,7 +166,11 @@ AS $$
 $$;
 ```
 
+
+
 ### Views
+
+
 
 #### `repo_stats`
 
@@ -146,42 +178,58 @@ Aggregates node count, edge count, document count, and last ingestion time per r
 
 ---
 
+
+
 ## 🔌 RESTful API
 
 Cognex exposes a complete **CRUD** REST API over three core resources: **Graph Nodes**, **Graph Edges**, and **Documents**.
 
 ### CRUD Endpoints Summary
 
-| Resource | Create | Read (List) | Read (One) | Update | Delete |
-|----------|--------|-------------|------------|--------|--------|
-| **Graph Nodes** | `POST /api/nodes` | `GET /api/nodes?repoUrl=...` | `GET /api/nodes/:id` | `PUT /api/nodes/:id` | `DELETE /api/nodes/:id` |
-| **Graph Edges** | `POST /api/edges` | `GET /api/edges?repoUrl=...` | `GET /api/edges/:id` | `PUT /api/edges/:id` | `DELETE /api/edges/:id` |
-| **Documents** | `POST /api/documents` | `GET /api/documents?repoUrl=...` | `GET /api/documents/:id` | `PUT /api/documents/:id` | `DELETE /api/documents/:id` |
+
+| Resource        | Create                | Read (List)                      | Read (One)               | Update                   | Delete                      |
+| --------------- | --------------------- | -------------------------------- | ------------------------ | ------------------------ | --------------------------- |
+| **Graph Nodes** | `POST /api/nodes`     | `GET /api/nodes?repoUrl=...`     | `GET /api/nodes/:id`     | `PUT /api/nodes/:id`     | `DELETE /api/nodes/:id`     |
+| **Graph Edges** | `POST /api/edges`     | `GET /api/edges?repoUrl=...`     | `GET /api/edges/:id`     | `PUT /api/edges/:id`     | `DELETE /api/edges/:id`     |
+| **Documents**   | `POST /api/documents` | `GET /api/documents?repoUrl=...` | `GET /api/documents/:id` | `PUT /api/documents/:id` | `DELETE /api/documents/:id` |
+
+
+
 
 ### Application Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | `GET` | Service health + dependency status |
-| `/api/ingest` | `POST` | Trigger repository ingestion (background) |
-| `/api/ask` | `POST` | Ask a question → streaming LLM answer |
-| `/api/graph` | `GET` | Retrieve full knowledge graph |
-| `/api/status` | `GET` | Check ingestion progress |
-| `/api/stats` | `GET` | Repository analytics |
 
-> **Full API documentation:** See [`API_DOCUMENTATION.md`](API_DOCUMENTATION.md)
+| Endpoint      | Method | Description                               |
+| ------------- | ------ | ----------------------------------------- |
+| `/health`     | `GET`  | Service health + dependency status        |
+| `/api/ingest` | `POST` | Trigger repository ingestion (background) |
+| `/api/ask`    | `POST` | Ask a question → streaming LLM answer     |
+| `/api/graph`  | `GET`  | Retrieve full knowledge graph             |
+| `/api/status` | `GET`  | Check ingestion progress                  |
+| `/api/stats`  | `GET`  | Repository analytics                      |
+
+
+> **Full API documentation:** See `[API_DOCUMENTATION.md](API_DOCUMENTATION.md)`
 
 ---
 
+
+
 ## ☁️ Cloud Services & Components
 
+
+
 ### 1. Cloudflare Pages (Frontend)
+
 - **Service Type:** Static site hosting + CDN
 - **Why chosen:** Zero-config global CDN, free tier, instant deploys from git
 - **Deployment:** `npx wrangler pages deploy ./frontend`
 - **URL:** `https://cognex-5ij.pages.dev/`
 
+
+
 ### 2. Cloudflare Workers (Backend)
+
 - **Service Type:** Serverless compute at the edge
 - **Why chosen:** Sub-50ms cold starts, 300+ global PoPs, generous free tier (100k req/day)
 - **Framework:** Hono (lightweight, Express-like router for Workers)
@@ -192,36 +240,53 @@ Cognex exposes a complete **CRUD** REST API over three core resources: **Graph N
   - CORS handled at edge layer
   - Structured logging with request IDs
 
+
+
 ### 3. Supabase (Database)
+
 - **Service Type:** Managed PostgreSQL + REST API + Realtime
 - **Why chosen:** Free tier includes 500MB DB, built-in pgvector extension, row-level security
 - **Schema:** 3 tables + 1 RPC function + 1 view + 10+ indexes
 - **Connection:** `@supabase/supabase-js` client with session disabled (Worker-safe)
 
+
+
 ### 4. Cohere API (Embeddings)
+
 - **Service Type:** Managed embedding inference
 - **Model:** `embed-english-v3.0` (1024 dimensions)
 - **Why chosen:** Free tier available, high-quality retrieval embeddings, supports `search_document` vs `search_query` input types
 - **Optimization:** LRU cache, batch processing (max 96 per call), exponential backoff
 
+
+
 ### 5. Groq API (LLM)
+
 - **Service Type:** Ultra-fast LLM inference
 - **Model:** `llama-3.3-70b-versatile` (primary) with fallback chain
 - **Why chosen:** Fastest inference in market, free tier, streaming support via Vercel AI SDK
 - **Optimization:** Token budget enforcement, context trimming, model fallback chain, timeout handling
 
+
+
 ### 6. Serper.dev (Web Search)
+
 - **Service Type:** Google Search API
 - **Why chosen:** 2,500 free queries, structured JSON results, no scraping needed
 - **Usage:** Fallback when vector search returns insufficient context
 
+
+
 ### 7. GitHub REST API
+
 - **Service Type:** Repository data source
 - **Authentication:** Personal Access Token (PAT) with `repo` scope
 - **Rate limit:** 5,000 requests/hour (authenticated)
 - **Optimization:** ETag caching, exponential backoff, concurrency-limited batch fetching
 
 ---
+
+
 
 ## 📁 Project Structure
 
@@ -267,9 +332,14 @@ Cognex exposes a complete **CRUD** REST API over three core resources: **Graph N
 
 ---
 
+
+
 ## 🚀 Deployment Guide
 
+
+
 ### Prerequisites
+
 - Node.js 20+
 - Cloudflare account (free)
 - Supabase account (free)
@@ -277,6 +347,8 @@ Cognex exposes a complete **CRUD** REST API over three core resources: **Graph N
 - Cohere API key (free tier)
 - GitHub Personal Access Token
 - Serper.dev API key (free tier)
+
+
 
 ### 1. Deploy Database (Supabase)
 
@@ -312,6 +384,8 @@ npx wrangler secret put WEB_SEARCH_API_KEY
 npm run deploy
 ```
 
+
+
 ### 3. Deploy Frontend (Cloudflare Pages)
 
 ```bash
@@ -325,28 +399,42 @@ Update `app.js` to point to your deployed Worker URL.
 
 ---
 
+
+
 ## 🧪 Testing
 
+
+
 ### Health Check
+
 ```bash
 curl https://cognex-worker.your-subdomain.workers.dev/health
 ```
 
+
+
 ### Ingest a Repository
+
 ```bash
 curl -X POST https://cognex-worker.your-subdomain.workers.dev/api/ingest \
   -H "Content-Type: application/json" \
   -d '{"repoUrl": "https://github.com/facebook/react"}'
 ```
 
+
+
 ### Ask a Question
+
 ```bash
 curl -X POST https://cognex-worker.your-subdomain.workers.dev/api/ask \
   -H "Content-Type: application/json" \
   -d '{"repoUrl": "https://github.com/facebook/react", "query": "How does useEffect work?"}'
 ```
 
+
+
 ### CRUD — Create a Node
+
 ```bash
 curl -X POST https://cognex-worker.your-subdomain.workers.dev/api/nodes \
   -H "Content-Type: application/json" \
@@ -358,80 +446,75 @@ curl -X POST https://cognex-worker.your-subdomain.workers.dev/api/nodes \
   }'
 ```
 
+
+
 ### CRUD — Update a Node
+
 ```bash
 curl -X PUT https://cognex-worker.your-subdomain.workers.dev/api/nodes/<UUID> \
   -H "Content-Type: application/json" \
   -d '{"label": "src/utils/helpers.ts", "metadata": {"extension": "ts", "size": 1200}}'
 ```
 
+
+
 ### CRUD — Delete a Node
+
 ```bash
 curl -X DELETE https://cognex-worker.your-subdomain.workers.dev/api/nodes/<UUID>
 ```
 
 ---
 
+
+
 ## 🎓 Key Cloud Computing Concepts Demonstrated
 
-| Concept | Implementation |
-|---------|---------------|
-| **Serverless Computing** | Cloudflare Workers — stateless, event-driven, auto-scaling |
-| **Edge Computing** | Workers run at 300+ global PoPs, minimizing latency |
-| **Static Site Hosting + CDN** | Cloudflare Pages serves frontend from edge caches |
-| **Managed Database (DBaaS)** | Supabase handles backups, scaling, and pgvector extension |
-| **Vector Database** | pgvector stores 1024-D embeddings + HNSW index for sub-millisecond similarity search |
-| **API Gateway** | Hono router on Workers acts as unified API entry point |
-| **Microservices Pattern** | Backend decomposed into 7 modules (github, graph, embeddings, supabase, rag, groq, search) |
-| **Background Job Processing** | `ctx.waitUntil()` offloads ingestion to avoid request timeouts |
-| **Caching Strategy** | LRU embedding cache, ETag HTTP caching, in-flight request deduplication |
-| **Retry & Circuit Breaker** | Exponential backoff with jitter on all external API calls |
-| **Secrets Management** | Cloudflare Workers secrets (encrypted, runtime-only) |
-| **CORS & Security** | Edge-level CORS, request validation, UUID sanitization |
 
----
+| Concept                       | Implementation                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------ |
+| **Serverless Computing**      | Cloudflare Workers — stateless, event-driven, auto-scaling                                 |
+| **Edge Computing**            | Workers run at 300+ global PoPs, minimizing latency                                        |
+| **Static Site Hosting + CDN** | Cloudflare Pages serves frontend from edge caches                                          |
+| **Managed Database (DBaaS)**  | Supabase handles backups, scaling, and pgvector extension                                  |
+| **Vector Database**           | pgvector stores 1024-D embeddings + HNSW index for sub-millisecond similarity search       |
+| **API Gateway**               | Hono router on Workers acts as unified API entry point                                     |
+| **Microservices Pattern**     | Backend decomposed into 7 modules (github, graph, embeddings, supabase, rag, groq, search) |
+| **Background Job Processing** | `ctx.waitUntil()` offloads ingestion to avoid request timeouts                             |
+| **Caching Strategy**          | LRU embedding cache, ETag HTTP caching, in-flight request deduplication                    |
+| **Retry & Circuit Breaker**   | Exponential backoff with jitter on all external API calls                                  |
+| **Secrets Management**        | Cloudflare Workers secrets (encrypted, runtime-only)                                       |
+| **CORS & Security**           | Edge-level CORS, request validation, UUID sanitization                                     |
 
-## 📹 Demonstration Video
-
-> **Video Link:** [Add your YouTube / Loom / Google Drive link here]
-
-**Video Outline:**
-1. **Introduction (0:00–0:30)** — Problem statement and solution overview
-2. **Architecture Walkthrough (0:30–1:30)** — Explain the diagram, cloud services, and data flow
-3. **Live Demo (1:30–4:00)** —
-   - Open `https://cognex-5ij.pages.dev/`
-   - Enter `https://github.com/facebook/react`
-   - Click "Build Graph" (show progress polling)
-   - Visualize the knowledge graph
-   - Ask: *"How does useEffect work?"* (show streaming answer)
-   - Ask: *"Who are the top contributors?"*
-4. **Database Inspection (4:00–4:45)** — Show Supabase Table Editor with nodes, edges, documents
-5. **API Testing (4:45–5:30)** — Use Postman/curl to demonstrate CRUD on `/api/nodes`, `/api/edges`, `/api/documents`
-6. **Deployment Explanation (5:30–6:00)** — Show Wrangler deploy, Cloudflare dashboard, Supabase project
-7. **Conclusion (6:00–6:30)** — Summarize cloud concepts learned
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Vanilla HTML5, CSS3, JavaScript, Cytoscape.js |
-| Backend | Node.js, Hono, Cloudflare Workers |
-| Database | PostgreSQL 15, pgvector, Supabase |
-| AI/ML | Cohere (embeddings), Groq (LLM), Vercel AI SDK |
-| Search | Serper.dev (Google Search API) |
-| Data Source | GitHub REST API v3 |
-| Testing | Vitest, @cloudflare/vitest-pool-workers |
-| DevOps | Wrangler CLI, GitHub Actions (optional) |
+
+| Layer       | Technology                                     |
+| ----------- | ---------------------------------------------- |
+| Frontend    | Vanilla HTML5, CSS3, JavaScript, Cytoscape.js  |
+| Backend     | Node.js, Hono, Cloudflare Workers              |
+| Database    | PostgreSQL 15, pgvector, Supabase              |
+| AI/ML       | Cohere (embeddings), Groq (LLM), Vercel AI SDK |
+| Search      | Serper.dev (Google Search API)                 |
+| Data Source | GitHub REST API v3                             |
+| Testing     | Vitest, @cloudflare/vitest-pool-workers        |
+| DevOps      | Wrangler CLI, GitHub Actions (optional)        |
+
 
 ---
+
+
 
 ## 📄 License
 
 MIT License — see [LICENSE.md](LICENSE.md)
 
 ---
+
+
 
 ## 👤 Author
 

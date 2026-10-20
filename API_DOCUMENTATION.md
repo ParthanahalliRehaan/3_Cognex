@@ -1,7 +1,6 @@
 # Cognex API Documentation
 
 > **Version:** 1.2.0  
-> **Base URL:** `https://cognex-worker.your-subdomain.workers.dev`  
 > **Deployed Frontend:** `https://cognex-5ij.pages.dev/`  
 
 ---
@@ -26,13 +25,17 @@ Cognex is a cloud-based Knowledge Graph & Doubt Resolution Engine for GitHub rep
 
 ### HTTP Methods Used
 
-| Method | Purpose |
-|--------|---------|
-| `GET` | Retrieve resources |
-| `POST` | Create resources / Trigger actions |
-| `PUT` | Update resources (full replacement) |
-| `DELETE` | Remove resources |
-| `OPTIONS` | CORS preflight |
+
+| Method    | Purpose                             |
+| --------- | ----------------------------------- |
+| `GET`     | Retrieve resources                  |
+| `POST`    | Create resources / Trigger actions  |
+| `PUT`     | Update resources (full replacement) |
+| `DELETE`  | Remove resources                    |
+| `OPTIONS` | CORS preflight                      |
+
+
+
 
 ### Response Format
 
@@ -55,13 +58,19 @@ Error responses:
 
 ---
 
+
+
 ## Authentication
 
 The API does not use token-based auth for public endpoints. CORS is configured to allow all origins. Sensitive operations rely on **Cloudflare Worker secrets** (Supabase keys, Groq API key, GitHub token) stored via `wrangler secret put`.
 
 ---
 
+
+
 ## Health & Status
+
+
 
 ### `GET /health`
 
@@ -86,6 +95,8 @@ Returns the health status of the worker and its dependencies.
 ```
 
 ---
+
+
 
 ## CRUD — Graph Nodes
 
@@ -128,6 +139,7 @@ Creates a single graph node.
 ```
 
 **Validation Rules:**
+
 - `repo_url` must be a valid GitHub URL.
 - `node_type` is required (string, max 50 chars).
 - `label` is required (string, max 500 chars).
@@ -135,16 +147,20 @@ Creates a single graph node.
 
 ---
 
+
+
 ### `GET /api/nodes` — List Nodes
 
 Retrieves all graph nodes for a repository, optionally filtered by `nodeType`.
 
 **Query Parameters:**
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `repoUrl` | string | Yes | GitHub repository URL |
-| `nodeType` | string | No | Filter by node type (e.g., `file`, `contributor`) |
+
+| Param      | Type   | Required | Description                                       |
+| ---------- | ------ | -------- | ------------------------------------------------- |
+| `repoUrl`  | string | Yes      | GitHub repository URL                             |
+| `nodeType` | string | No       | Filter by node type (e.g., `file`, `contributor`) |
+
 
 **Example:** `GET /api/nodes?repoUrl=https://github.com/vercel/next.js&nodeType=file`
 
@@ -169,6 +185,8 @@ Retrieves all graph nodes for a repository, optionally filtered by `nodeType`.
 ```
 
 ---
+
+
 
 ### `GET /api/nodes/:id` — Get Single Node
 
@@ -204,6 +222,8 @@ Retrieves a specific node by its UUID.
 
 ---
 
+
+
 ### `PUT /api/nodes/:id` — Update Node
 
 Updates one or more fields of an existing node.
@@ -220,6 +240,7 @@ Updates one or more fields of an existing node.
 ```
 
 **Updatable Fields:**
+
 - `label` (string)
 - `node_type` (string)
 - `metadata` (JSON object)
@@ -250,6 +271,8 @@ Updates one or more fields of an existing node.
 
 ---
 
+
+
 ### `DELETE /api/nodes/:id` — Delete Node
 
 Permanently removes a node and its associated edges (cascaded by foreign key).
@@ -268,6 +291,8 @@ Permanently removes a node and its associated edges (cascaded by foreign key).
 ```
 
 ---
+
+
 
 ## CRUD — Graph Edges
 
@@ -290,6 +315,7 @@ Creates a relationship between two existing nodes.
 ```
 
 **Validation Rules:**
+
 - `repo_url` must be a valid GitHub URL.
 - `source_node_id` and `target_node_id` must be valid UUIDs referencing existing nodes.
 - `relation` is required (string, max 50 chars).
@@ -314,16 +340,20 @@ Creates a relationship between two existing nodes.
 
 ---
 
+
+
 ### `GET /api/edges` — List Edges
 
 Retrieves all edges for a repository, optionally filtered by `relation`.
 
 **Query Parameters:**
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `repoUrl` | string | Yes | GitHub repository URL |
-| `relation` | string | No | Filter by relation type (e.g., `CONTAINS`, `AUTHORED`) |
+
+| Param      | Type   | Required | Description                                            |
+| ---------- | ------ | -------- | ------------------------------------------------------ |
+| `repoUrl`  | string | Yes      | GitHub repository URL                                  |
+| `relation` | string | No       | Filter by relation type (e.g., `CONTAINS`, `AUTHORED`) |
+
 
 **Example:** `GET /api/edges?repoUrl=https://github.com/vercel/next.js&relation=CONTAINS`
 
@@ -350,6 +380,8 @@ Retrieves all edges for a repository, optionally filtered by `relation`.
 
 ---
 
+
+
 ### `GET /api/edges/:id` — Get Single Edge
 
 Retrieves a specific edge by its UUID.
@@ -372,6 +404,8 @@ Retrieves a specific edge by its UUID.
 ```
 
 ---
+
+
 
 ### `PUT /api/edges/:id` — Update Edge
 
@@ -405,6 +439,8 @@ Updates the `relation` or `metadata` of an existing edge.
 
 ---
 
+
+
 ### `DELETE /api/edges/:id` — Delete Edge
 
 Permanently removes an edge.
@@ -423,6 +459,8 @@ Permanently removes an edge.
 ```
 
 ---
+
+
 
 ## CRUD — Documents
 
@@ -448,6 +486,7 @@ Creates a single document with its embedding vector.
 ```
 
 **Validation Rules:**
+
 - `repo_url` must be a valid GitHub URL.
 - `content` is required (string, max 100,000 chars).
 - `embedding` is required (array of 1024 floats).
@@ -471,15 +510,19 @@ Creates a single document with its embedding vector.
 
 ---
 
+
+
 ### `GET /api/documents` — List Documents
 
 Retrieves all documents for a repository.
 
 **Query Parameters:**
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `repoUrl` | string | Yes | GitHub repository URL |
+
+| Param     | Type   | Required | Description           |
+| --------- | ------ | -------- | --------------------- |
+| `repoUrl` | string | Yes      | GitHub repository URL |
+
 
 **Example:** `GET /api/documents?repoUrl=https://github.com/vercel/next.js`
 
@@ -503,6 +546,8 @@ Retrieves all documents for a repository.
 ```
 
 ---
+
+
 
 ### `GET /api/documents/:id` — Get Single Document
 
@@ -528,6 +573,8 @@ Retrieves a specific document by its UUID.
 ```
 
 ---
+
+
 
 ### `PUT /api/documents/:id` — Update Document
 
@@ -561,6 +608,8 @@ Updates the `content`, `metadata`, or `embedding` of an existing document.
 
 ---
 
+
+
 ### `DELETE /api/documents/:id` — Delete Document
 
 Permanently removes a document.
@@ -579,6 +628,8 @@ Permanently removes a document.
 ```
 
 ---
+
+
 
 ## Application Routes
 
@@ -626,6 +677,8 @@ Triggers the background pipeline that fetches a GitHub repository, builds its kn
 
 ---
 
+
+
 ### `POST /api/ask` — Ask a Question
 
 Runs the Agentic RAG pipeline: embeds the query, searches vectors + graph, optionally falls back to web search, and streams an LLM-generated answer.
@@ -642,10 +695,13 @@ Runs the Agentic RAG pipeline: embeds the query, searches vectors + graph, optio
 **Response:** Streaming `text/plain` (Server-Sent Events style). The response body is a continuous stream of tokens from the Groq LLM.
 
 **Headers:**
+
 - `Content-Type: text/plain; charset=utf-8`
 - `X-Request-ID: a1b2c3d4`
 
 ---
+
+
 
 ### `GET /api/graph` — Get Knowledge Graph
 
@@ -653,9 +709,11 @@ Retrieves the complete knowledge graph (nodes + edges) for a repository.
 
 **Query Parameters:**
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `repoUrl` | string | Yes | GitHub repository URL |
+
+| Param     | Type   | Required | Description           |
+| --------- | ------ | -------- | --------------------- |
+| `repoUrl` | string | Yes      | GitHub repository URL |
+
 
 **Example:** `GET /api/graph?repoUrl=https://github.com/facebook/react`
 
@@ -674,15 +732,19 @@ Retrieves the complete knowledge graph (nodes + edges) for a repository.
 
 ---
 
+
+
 ### `GET /api/status` — Ingestion Status
 
 Checks whether a repository has been ingested and returns progress for background jobs.
 
 **Query Parameters:**
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `repoUrl` | string | Yes | GitHub repository URL |
+
+| Param     | Type   | Required | Description           |
+| --------- | ------ | -------- | --------------------- |
+| `repoUrl` | string | Yes      | GitHub repository URL |
+
 
 **Response (200 OK):**
 
@@ -703,15 +765,19 @@ Possible `status` values: `not_found`, `processing`, `done`, `error`.
 
 ---
 
+
+
 ### `GET /api/stats` — Repository Statistics
 
 Computes aggregate statistics from the knowledge graph.
 
 **Query Parameters:**
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `repoUrl` | string | Yes | GitHub repository URL |
+
+| Param     | Type   | Required | Description           |
+| --------- | ------ | -------- | --------------------- |
+| `repoUrl` | string | Yes      | GitHub repository URL |
+
 
 **Response (200 OK):**
 
@@ -758,6 +824,8 @@ Computes aggregate statistics from the knowledge graph.
 
 ---
 
+
+
 ## Error Handling
 
 All errors follow a consistent structure:
@@ -769,42 +837,54 @@ All errors follow a consistent structure:
 }
 ```
 
+
+
 ### HTTP Status Codes
 
-| Code | Meaning | Common Causes |
-|------|---------|---------------|
-| `200` | OK | Successful GET, PUT, DELETE |
-| `201` | Created | Successful POST |
-| `202` | Accepted | Background job started (`/api/ingest`) |
-| `400` | Bad Request | Invalid parameters, missing fields, malformed UUID |
-| `404` | Not Found | Resource does not exist |
+
+| Code  | Meaning               | Common Causes                                                |
+| ----- | --------------------- | ------------------------------------------------------------ |
+| `200` | OK                    | Successful GET, PUT, DELETE                                  |
+| `201` | Created               | Successful POST                                              |
+| `202` | Accepted              | Background job started (`/api/ingest`)                       |
+| `400` | Bad Request           | Invalid parameters, missing fields, malformed UUID           |
+| `404` | Not Found             | Resource does not exist                                      |
 | `500` | Internal Server Error | Database failure, external API timeout, unexpected exception |
 
+
 ---
+
+
 
 ## Rate Limits
 
-| Layer | Limit | Notes |
-|-------|-------|-------|
-| Cloudflare Workers | 100,000 requests/day (free tier) | Burst capacity via global edge network |
-| GitHub API | 5,000 requests/hour (with token) | Unauthenticated: 60/hour |
-| Groq API | Varies by plan | Check Groq dashboard for current limits |
-| Cohere API | Varies by plan | `embed-english-v3.0` batch size max 96 |
-| Serper.dev | 2,500 queries (free tier) | Web search fallback only |
+
+| Layer              | Limit                            | Notes                                   |
+| ------------------ | -------------------------------- | --------------------------------------- |
+| Cloudflare Workers | 100,000 requests/day (free tier) | Burst capacity via global edge network  |
+| GitHub API         | 5,000 requests/hour (with token) | Unauthenticated: 60/hour                |
+| Groq API           | Varies by plan                   | Check Groq dashboard for current limits |
+| Cohere API         | Varies by plan                   | `embed-english-v3.0` batch size max 96  |
+| Serper.dev         | 2,500 queries (free tier)        | Web search fallback only                |
+
 
 ---
 
+
+
 ## Cloud Services Used
 
-| Service | Purpose | Tier |
-|---------|---------|------|
-| **Cloudflare Pages** | Static frontend hosting | Free |
-| **Cloudflare Workers** | Serverless backend / API gateway | Free |
-| **Supabase** | PostgreSQL + pgvector database | Free |
-| **Groq** | LLM inference (streaming) | Free tier |
-| **Cohere** | Text embeddings (1024-D) | Free tier |
-| **Serper.dev** | Web search fallback | Free tier (2,500 queries) |
-| **GitHub REST API** | Repository data extraction | Free (with PAT) |
+
+| Service                | Purpose                          | Tier                      |
+| ---------------------- | -------------------------------- | ------------------------- |
+| **Cloudflare Pages**   | Static frontend hosting          | Free                      |
+| **Cloudflare Workers** | Serverless backend / API gateway | Free                      |
+| **Supabase**           | PostgreSQL + pgvector database   | Free                      |
+| **Groq**               | LLM inference (streaming)        | Free tier                 |
+| **Cohere**             | Text embeddings (1024-D)         | Free tier                 |
+| **Serper.dev**         | Web search fallback              | Free tier (2,500 queries) |
+| **GitHub REST API**    | Repository data extraction       | Free (with PAT)           |
+
 
 ---
 
