@@ -1,0 +1,9 @@
+# BASELINE for Q2(c) "before" Trivy scan — deliberately NOT hardened:
+# full Debian node:20 image, runs as root, dev dependencies and the whole folder included.
+FROM node:20
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+EXPOSE 3000
+CMD ["node", "server.js"]

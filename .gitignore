@@ -1,3 +1,6 @@
+# Misc
+
+DA3_RUNBOOK.md
 # Logs
 
 logs
@@ -165,3 +168,8 @@ dist
 .env*
 !.env.example
 .wrangler/
+
+# DA3
+agents/reports/
+docs/evidence/q2/trivy-*.json
+backend/cognex-worker/node_modules/

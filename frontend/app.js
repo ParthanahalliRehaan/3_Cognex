@@ -1,11 +1,12 @@
 (function() {
   'use strict';
-  // const API_BASE = 'http://127.0.0.1:8787';
+  const API_BASE = 'http://127.0.0.1:8787';
+  /*
   const API_BASE = (window.location.hostname === 'localhost' ||
                     window.location.hostname === '127.0.0.1' ||
                     window.location.hostname === '::1')
     ? 'http://127.0.0.1:8787'
-    : 'https://cognex-worker.parthanahalli-rehaan.workers.dev';
+    : 'https://cognex-worker.parthanahalli-rehaan.workers.dev';*/
 
   const MAX_TABS = 20;
   const TAB_TRUNCATE_LEN = 24;

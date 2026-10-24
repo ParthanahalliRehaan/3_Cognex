@@ -1,0 +1,61 @@
+name: cognex
+
+# Image selection (Q2c):  default = hardened.  For the "before" scan:
+#   BACKEND_DOCKERFILE=Dockerfile.before BACKEND_TAG=before docker compose build backend1
+x-backend: &backend
+  build:
+    context: ./backend/cognex-worker
+    dockerfile: ${BACKEND_DOCKERFILE:-Dockerfile}
+  image: cognex-backend:${BACKEND_TAG:-hardened}
+  env_file: ./backend/cognex-worker/.env
+  init: true                      # tini as PID 1 so `docker stop` is instant
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 10s
+
+services:
+  backend1:
+    <<: *backend
+    container_name: cognex-backend1
+    environment: { INSTANCE_ID: "1" }
+    ports: ["3001:3000"]
+  backend2:
+    <<: *backend
+    container_name: cognex-backend2
+    environment: { INSTANCE_ID: "2" }
+    ports: ["3002:3000"]
+  backend3:
+    <<: *backend
+    container_name: cognex-backend3
+    environment: { INSTANCE_ID: "3" }
+    ports: ["3003:3000"]
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: cognex-nginx
+    ports: ["80:80"]              # port busy? use "8080:80" and put :8080 in every URL
+    volumes:
+      - ./nginx/${NGINX_CONF:-nginx.3.failover.conf}:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend1: { condition: service_healthy }
+      backend2: { condition: service_healthy }
+      backend3: { condition: service_healthy }
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cognex-prometheus
+    volumes: ["./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cognex-grafana
+    ports: ["3030:3000"]          # http://localhost:3030  (admin / admin)
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]

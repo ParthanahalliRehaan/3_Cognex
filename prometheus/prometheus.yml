@@ -1,0 +1,6 @@
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: cognex-backends
+    static_configs:
+      - targets: ['backend1:3000', 'backend2:3000', 'backend3:3000']
